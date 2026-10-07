@@ -68,7 +68,8 @@ namespace DigitalTwin
                 }
                 else if (cameraRotor.IsAutoRotating)
                 {
-                    pkt.camera_motor_speed = cameraRotor.AutoRotateSpeed;
+                    // 自动巡航：下发带方向的速度（正转/反转往复）
+                    pkt.camera_motor_speed = cameraRotor.CurrentAutoRotateSpeed;
                 }
                 else
                 {

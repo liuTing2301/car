@@ -15,8 +15,12 @@ namespace DigitalTwin
         [SerializeField] private float manualRotateSpeed = 90f;
 
         [Header("自动巡航旋转")]
-        [Tooltip("自动巡航时云台旋转速度（度/秒）。")]
+        [Tooltip("自动巡航时云台旋转速度（度/秒），转满一圈后自动反向往复。")]
         [SerializeField] private float autoRotateSpeed = 30f;
+
+        [Header("自动往复")]
+        [Tooltip("自动巡航时，云台转过该角度（度）后自动反向，默认一圈 360°。")]
+        [SerializeField] private float reverseAngle = 360f;
 
         [Header("旋转轴")]
         [Tooltip("摄像头云台旋转轴（默认绕 X 轴）。")]
@@ -46,6 +50,11 @@ namespace DigitalTwin
         private float targetAngle;
         private float currentAngle;
 
+        // 自动往复控制：方向（1 正向 / -1 反向）、自上次反转以来累积的旋转角度、上一帧角度
+        private float autoRotateDirection = 1f;
+        private float autoRotateAccumulated;
+        private float lastCurrentAngle;
+
         /// <summary>需要跟随摄像头同步旋转的部件。</summary>
         private class Follower
         {
@@ -67,6 +76,8 @@ namespace DigitalTwin
             get => manualRotateSpeed;
             set => manualRotateSpeed = Mathf.Max(0f, value);
         }
+        /// <summary>当前自动旋转的实际速度（带方向，正/负），用于下发给下位机。</summary>
+        public float CurrentAutoRotateSpeed => autoRotateSpeed * autoRotateDirection;
         /// <summary>当前是否正在自动旋转（自动巡航且未手动干预）。</summary>
         public bool IsAutoRotating => autoRotate && !Input.GetKey(KeyCode.E);
         /// <summary>云台物体（供外部访问，可为 null）。</summary>
@@ -82,6 +93,13 @@ namespace DigitalTwin
         public void SetAutoRotate(bool enabled)
         {
             autoRotate = enabled;
+            if (enabled)
+            {
+                // 重新开启自动旋转时，从正方向开始并清空累积
+                autoRotateDirection = 1f;
+                autoRotateAccumulated = 0f;
+                lastCurrentAngle = currentAngle;
+            }
         }
 
         private void Update()
@@ -94,10 +112,13 @@ namespace DigitalTwin
             // 点云重建弹窗打开时禁用云台旋转
             if (DigitalTwinUI.RebuildPanelOpen)
             {
+                lastCurrentAngle = currentAngle;
                 return;
             }
 
-            // 按住 E 键手动旋转优先；否则自动巡航时自动旋转
+            bool isAutoRotating = autoRotate && !Input.GetKey(KeyCode.E);
+
+            // 按住 E 键手动旋转优先；否则自动巡航时按方向自动旋转
             float speed = 0f;
             if (Input.GetKey(KeyCode.E))
             {
@@ -105,7 +126,7 @@ namespace DigitalTwin
             }
             else if (autoRotate)
             {
-                speed = autoRotateSpeed;
+                speed = autoRotateSpeed * autoRotateDirection;
             }
 
             if (Mathf.Abs(speed) > 0.01f)
@@ -115,6 +136,24 @@ namespace DigitalTwin
 
             // 平滑动画：向目标角度插值
             currentAngle = Mathf.Lerp(currentAngle, targetAngle, smoothSpeed * Time.deltaTime);
+
+            // 自动往复：监测 Unity 实际旋转角度，转满 reverseAngle 后自动反向
+            if (isAutoRotating)
+            {
+                float delta = currentAngle - lastCurrentAngle;
+                autoRotateAccumulated += delta;
+                if (Mathf.Abs(autoRotateAccumulated) >= reverseAngle)
+                {
+                    autoRotateDirection *= -1f;
+                    autoRotateAccumulated = 0f;
+                }
+            }
+            else
+            {
+                // 手动或停止时清空累积，避免重新进入自动时误判
+                autoRotateAccumulated = 0f;
+            }
+            lastCurrentAngle = currentAngle;
 
             // 摄像头云台绕 rotateAxis（X 轴）旋转，保持原本角度
             Quaternion gimbalDelta = Quaternion.Euler(rotateAxis * currentAngle);
