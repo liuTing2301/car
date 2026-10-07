@@ -137,11 +137,13 @@ namespace DigitalTwin
             // 平滑动画：向目标角度插值
             currentAngle = Mathf.Lerp(currentAngle, targetAngle, smoothSpeed * Time.deltaTime);
 
+            // 本帧实际旋转角度增量
+            float angleDelta = currentAngle - lastCurrentAngle;
+
             // 自动往复：监测 Unity 实际旋转角度，转满 reverseAngle 后自动反向
             if (isAutoRotating)
             {
-                float delta = currentAngle - lastCurrentAngle;
-                autoRotateAccumulated += delta;
+                autoRotateAccumulated += angleDelta;
                 if (Mathf.Abs(autoRotateAccumulated) >= reverseAngle)
                 {
                     autoRotateDirection *= -1f;
@@ -156,15 +158,9 @@ namespace DigitalTwin
             lastCurrentAngle = currentAngle;
 
             // 摄像头云台绕 rotateAxis（X 轴）旋转，保持原本角度
+            // 支架已设为摄像头的子物体，会自动跟随旋转，共享同一个旋转中心
             Quaternion gimbalDelta = Quaternion.Euler(rotateAxis * currentAngle);
             gimbal.localRotation = baseRotation * gimbalDelta;
-
-            // 跟随部件（如圆角5）绕 followerAxis（Z 轴）旋转，保持原本角度
-            Quaternion followerDelta = Quaternion.Euler(followerAxis * currentAngle);
-            foreach (Follower follower in followers)
-            {
-                follower.transform.localRotation = follower.baseRotation * followerDelta;
-            }
         }
 
         /// <summary>查找或创建云台物体。</summary>
@@ -232,6 +228,11 @@ namespace DigitalTwin
                     if (name.Contains(keyword.ToLower()))
                     {
                         followers.Add(new Follower { transform = t, baseRotation = t.localRotation });
+                        // 将支架设为摄像头的子物体，共享同一个旋转中心（pivot）
+                        if (gimbal != null && t.parent != gimbal)
+                        {
+                            t.SetParent(gimbal, true);
+                        }
                         break;
                     }
                 }
