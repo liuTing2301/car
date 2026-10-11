@@ -239,7 +239,7 @@ Light:
   serializedVersion: 10
   m_Type: 1
   m_Shape: 0
-  m_Color: {r: 1, g: 0.9927585, b: 0.8392157, a: 1}
+  m_Color: {r: 0.9940985, g: 1, b: 0.7971698, a: 1}
   m_Intensity: 1
   m_Range: 10
   m_SpotAngle: 30
@@ -615,14 +615,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9e65626ef7eb3e547a73edd6b7f8263f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  maxSpeed: 100
+  manualMaxSpeed: 10
   acceleration: 20
-  autoScaleSpeed: 0
-  cruiseSpeed: 2
+  dutySpeedFactor: 14.86
+  cruiseGear: 3
   usePhysics: 1
   keepHeight: 1
   rotateWheels: 1
-  wheelSpinSpeed: 2
+  wheelSpinSpeed: 24
   wheelAxis: {x: 0, y: 0, z: 1}
   wheelKeywords:
   - "\u667A\u80FD\u8F66\u8F6E_\u76F4\u5F8448mm"
@@ -691,6 +691,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   manualRotateSpeed: 90
   autoRotateSpeed: 30
+  reverseAngle: 360
   rotateAxis: {x: 1, y: 0, z: 0}
   followerAxis: {x: 0, y: 0, z: 1}
   smoothSpeed: 8
