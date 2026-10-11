@@ -172,13 +172,29 @@ namespace DigitalTwin
             sections.Add(section);
             sectionsDirty = true;
 
-            // 记录截面环中心、朝向、平均半径（用于射线拾取）
+            // 记录截面环中心、朝向、平均半径（用于缺陷定位）
+            AddSectionStats(section, car != null ? car.rotation : Quaternion.identity);
+
+            if (sections.Count == 1)
+            {
+                Debug.Log($"[PointCloudRebuilder] 收到首个截面，每截面 {sectionSize} 点");
+            }
+            else if (sections.Count % 20 == 0)
+            {
+                Debug.Log($"[PointCloudRebuilder] 已累积 {sections.Count} 截面");
+            }
+        }
+
+        /// <summary>计算并记录一个截面环的中心、朝向与平均半径（缺陷定位用）。</summary>
+        private void AddSectionStats(Vector3[] section, Quaternion rotation)
+        {
             Vector3 center = Vector3.zero;
             int valid = 0;
             foreach (Vector3 p in section)
             {
                 if (!float.IsNaN(p.x)) { center += p; valid++; }
             }
+
             float radius = 0f;
             if (valid > 0)
             {
@@ -190,18 +206,10 @@ namespace DigitalTwin
                 radius /= valid;
                 if (radius > 0f) avgRadius = radius;
             }
-            sectionCenters.Add(center);
-            sectionRotations.Add(car != null ? car.rotation : Quaternion.identity);
-            sectionRadii.Add(radius);
 
-            if (sections.Count == 1)
-            {
-                Debug.Log($"[PointCloudRebuilder] 收到首个截面，每截面 {sectionSize} 点");
-            }
-            else if (sections.Count % 20 == 0)
-            {
-                Debug.Log($"[PointCloudRebuilder] 已累积 {sections.Count} 截面");
-            }
+            sectionCenters.Add(center);
+            sectionRotations.Add(rotation);
+            sectionRadii.Add(radius);
         }
 
         /// <summary>用相邻有效点填充 NaN 缺口，保证截面环连续（首尾循环）。</summary>
@@ -394,6 +402,50 @@ namespace DigitalTwin
         {
             ResetAll();
             sectionSize = 0;
+        }
+
+        /// <summary>导出当前累积的截面环（世界坐标）副本，用于本地存档。</summary>
+        public Vector3[][] GetSections()
+        {
+            Vector3[][] copy = new Vector3[sections.Count][];
+            for (int i = 0; i < sections.Count; i++)
+            {
+                copy[i] = (Vector3[])sections[i].Clone();
+            }
+            return copy;
+        }
+
+        /// <summary>从本地存档加载截面环（世界坐标）并立即重建网格。</summary>
+        public bool LoadSections(Vector3[][] data, float radius)
+        {
+            ResetAll();
+            if (data == null || data.Length == 0 || data[0] == null || data[0].Length == 0)
+            {
+                sectionSize = 0;
+                return false;
+            }
+
+            sectionSize = data[0].Length;
+            for (int s = 0; s < data.Length; s++)
+            {
+                Vector3[] sec = data[s];
+                if (sec == null || sec.Length != sectionSize)
+                {
+                    continue;
+                }
+                sections.Add(sec);
+                // 顶点已是世界坐标，故使用单位朝向
+                AddSectionStats(sec, Quaternion.identity);
+            }
+
+            if (radius > 0f)
+            {
+                avgRadius = radius;
+            }
+
+            processedSections = 0;
+            Mesh m = Rebuild();
+            return m != null;
         }
 
         private Material CreateMaterial()
