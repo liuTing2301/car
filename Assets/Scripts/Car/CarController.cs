@@ -10,16 +10,18 @@ namespace DigitalTwin
     public class CarController : MonoBehaviour
     {
         [Header("驱动参数")]
-        [SerializeField] private float maxSpeed = 10f;
+        [Tooltip("手动模式速度上限（cm/s）。")]
+        [SerializeField] private float manualMaxSpeed = 10f;
         [SerializeField] private float acceleration = 20f;
 
-        [Header("自适应")]
-        [Tooltip("根据模型实际尺寸自动调整 maxSpeed，使速度感与模型大小匹配。")]
-        [SerializeField] private bool autoScaleSpeed = true;
+        [Header("占空比换算")]
+        [Tooltip("占空比 → 线速度的换算系数（cm/s 每占空比）。0.7 占空比对应 10.4 cm/s，则约 14.86。")]
+        [SerializeField] private float dutySpeedFactor = 14.86f;
 
-        [Header("自动巡航")]
-        [Tooltip("自动巡航时的行驶速度（m/s），与手动模式的 maxSpeed 独立。")]
-        [SerializeField] private float cruiseSpeed = 2f;
+        [Header("自动巡航挡位")]
+        [Tooltip("自动巡航挡位 1~5，占空比依次 0.3 / 0.4 / 0.5 / 0.6 / 0.7。")]
+        [Range(1, 5)]
+        [SerializeField] private int cruiseGear = 3;
 
         [Header("移动模式")]
         [Tooltip("使用 Rigidbody 物理驱动；关闭则用 Transform 直接移动（更稳定）。")]
@@ -29,8 +31,8 @@ namespace DigitalTwin
 
         [Header("车轮动画")]
         [SerializeField] private bool rotateWheels = true;
-        [Tooltip("每前进 1 米车轮旋转的角度（度/米），按车轮半径调整。")]
-        [SerializeField] private float wheelSpinSpeed = 100f;
+        [Tooltip("每前进 1 cm 车轮旋转的角度（度/cm），按车轮半径调整。直径 48mm 约 23.9。")]
+        [SerializeField] private float wheelSpinSpeed = 24f;
         [SerializeField] private Vector3 wheelAxis = Vector3.right;
         [Tooltip("自动查找名字含这些关键字的子物体作为车轮。")]
         [SerializeField] private string[] wheelKeywords = { "wheel", "tire", "tyre", "轮" };
@@ -38,25 +40,33 @@ namespace DigitalTwin
         [SerializeField] private List<Transform> manualWheels = new List<Transform>();
 
         private Rigidbody rb;
-        private float currentSpeed;
+        private float currentSpeed;   // cm/s（场景单位）
         private float initialHeight;
-        private float totalDistance;
+        private float totalDistance;  // cm
         private bool autoCruise;
         private readonly List<Transform> wheels = new List<Transform>();
 
-        public float Speed => Mathf.Abs(currentSpeed);
+        public float Speed => Mathf.Abs(currentSpeed);  // cm/s
         /// <summary>油门：-1（后退）~ 1（前进）。</summary>
         public float Throttle { get; private set; }
-        public float MaxSpeed => maxSpeed;
+        /// <summary>当前轮电机占空比（0~1）。</summary>
+        public float DutyCycle { get; private set; }
+        /// <summary>手动模式速度上限（cm/s）。</summary>
+        public float MaxSpeed => manualMaxSpeed;
+        /// <summary>占空比 → 速度换算系数（cm/s 每占空比）。</summary>
+        public float DutySpeedFactor
+        {
+            get => dutySpeedFactor;
+            set => dutySpeedFactor = Mathf.Max(0.01f, value);
+        }
+        /// <summary>自动巡航挡位（1~5）。</summary>
+        public int CruiseGear
+        {
+            get => cruiseGear;
+            set => cruiseGear = Mathf.Clamp(value, 1, 5);
+        }
         public float TotalDistance => totalDistance;
         public bool IsAutoCruise => autoCruise;
-
-        /// <summary>自动巡航行驶速度（m/s）。</summary>
-        public float CruiseSpeed
-        {
-            get => cruiseSpeed;
-            set => cruiseSpeed = Mathf.Max(0f, value);
-        }
 
         /// <summary>开启自动巡航时，小车自动以前进油门行驶。</summary>
         public void SetAutoCruise(bool enabled)
@@ -64,21 +74,22 @@ namespace DigitalTwin
             autoCruise = enabled;
         }
 
-        /// <summary>设定自动巡航行驶速度（m/s）。</summary>
-        public void SetCruiseSpeed(float speed)
+        /// <summary>设定自动巡航挡位（1~5）。</summary>
+        public void SetCruiseGear(int gear)
         {
-            cruiseSpeed = Mathf.Max(0f, speed);
+            cruiseGear = Mathf.Clamp(gear, 1, 5);
+        }
+
+        /// <summary>挡位 → 占空比（1 挡 0.3，2 挡 0.4，…，5 挡 0.7）。</summary>
+        public static float GearToDuty(int gear)
+        {
+            return 0.2f + Mathf.Clamp(gear, 1, 5) * 0.1f;
         }
 
         private void Awake()
         {
             rb = GetComponent<Rigidbody>();
             initialHeight = transform.position.y;
-
-            if (autoScaleSpeed)
-            {
-                AutoScaleSpeed();
-            }
 
             ApplyRigidbodyMode();
             FindWheels();
@@ -120,25 +131,6 @@ namespace DigitalTwin
             }
         }
 
-        private void AutoScaleSpeed()
-        {
-            Renderer[] renderers = GetComponentsInChildren<Renderer>();
-            if (renderers.Length == 0)
-            {
-                return;
-            }
-
-            Bounds bounds = renderers[0].bounds;
-            for (int i = 1; i < renderers.Length; i++)
-            {
-                bounds.Encapsulate(renderers[i].bounds);
-            }
-
-            float size = Mathf.Max(0.1f, bounds.size.magnitude);
-            maxSpeed = size * 0.5f;
-            acceleration = maxSpeed * 2f;
-        }
-
         private void ApplyRigidbodyMode()
         {
             if (rb == null)
@@ -167,6 +159,11 @@ namespace DigitalTwin
         private void Update()
         {
             Throttle = autoCruise ? 1f : Input.GetAxisRaw("Vertical");
+
+            // 当前占空比：自动巡航 = 挡位占空比；手动 = 油门 × 上限占空比
+            DutyCycle = autoCruise
+                ? GearToDuty(cruiseGear)
+                : Mathf.Abs(Throttle) * (manualMaxSpeed / dutySpeedFactor);
 
             if (!usePhysics)
             {
@@ -214,8 +211,10 @@ namespace DigitalTwin
             totalDistance += Mathf.Abs(currentSpeed) * Time.fixedDeltaTime;
         }
 
-        /// <summary>当前模式下的速度上限：自动巡航用巡航速度，手动用最大速度。</summary>
-        private float SpeedLimit => autoCruise ? cruiseSpeed : maxSpeed;
+        /// <summary>当前模式下的速度上限（cm/s）：自动巡航用挡位速度，手动用手动上限。</summary>
+        private float SpeedLimit => autoCruise
+            ? GearToDuty(cruiseGear) * dutySpeedFactor
+            : manualMaxSpeed;
 
         private void RotateWheels(float dt)
         {
@@ -224,6 +223,7 @@ namespace DigitalTwin
                 return;
             }
 
+            // currentSpeed 为 cm/s，wheelSpinSpeed 为 度/cm
             float angle = currentSpeed * wheelSpinSpeed * dt;
             foreach (Transform w in wheels)
             {

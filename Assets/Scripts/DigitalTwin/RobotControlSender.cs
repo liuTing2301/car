@@ -16,8 +16,6 @@ namespace DigitalTwin
         [Header("发送")]
         [Tooltip("发送间隔（秒），默认 0.05s = 20Hz。")]
         [SerializeField] private float interval = 0.05f;
-        [Tooltip("线速度(m/s) → 轮电机转速(RPM) 的换算系数。轮半径约 5cm 时约 191。")]
-        [SerializeField] private float rpmPerMeterPerSecond = 191f;
 
         private float timer;
 
@@ -49,12 +47,12 @@ namespace DigitalTwin
 
             ControlPacket pkt = new ControlPacket();
 
-            // 轮电机：由小车线速度换算转速，方向由油门决定
+            // 轮电机：发送占空比（0~1），方向由油门决定
             if (car != null)
             {
-                pkt.speed = car.Speed;
+                pkt.speed = car.Speed;      // cm/s
                 pkt.throttle = car.Throttle;
-                pkt.wheel_motor_speed = car.Speed * rpmPerMeterPerSecond;
+                pkt.wheel_motor_duty = car.DutyCycle;
                 pkt.direction = car.Throttle > 0.01f ? 1 : (car.Throttle < -0.01f ? -1 : 0);
                 pkt.drive_mode = car.IsAutoCruise ? "auto" : "manual";
             }

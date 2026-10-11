@@ -80,16 +80,16 @@ namespace DigitalTwin
 
     /// <summary>
     /// Unity 发送给小车（树莓派）的控制指令。
-    /// 示例：{"type":"control","wheel_motor_speed":120.0,"camera_motor_speed":30.0,
-    ///        "drive_mode":"manual","direction":1,"throttle":0.8,"speed":1.5}
+    /// 示例：{"type":"control","wheel_motor_duty":0.5,"camera_motor_speed":30.0,
+    ///        "drive_mode":"manual","direction":1,"throttle":0.8,"speed":7.4}
     /// </summary>
     [Serializable]
     public class ControlPacket
     {
         public string type = "control";
 
-        /// <summary>轮电机转速（RPM，转/分钟）。</summary>
-        public double wheel_motor_speed;
+        /// <summary>轮电机占空比（0~1）。</summary>
+        public double wheel_motor_duty;
 
         /// <summary>摄像头电机转速（度/秒）。</summary>
         public double camera_motor_speed;
@@ -103,7 +103,7 @@ namespace DigitalTwin
         /// <summary>油门：-1 ~ 1。</summary>
         public double throttle;
 
-        /// <summary>线速度（m/s，正值）。</summary>
+        /// <summary>线速度（cm/s，正值）。</summary>
         public double speed;
     }
 }

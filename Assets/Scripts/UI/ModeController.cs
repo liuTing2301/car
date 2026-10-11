@@ -15,9 +15,8 @@ namespace DigitalTwin
         [SerializeField] private CarController car;
         [SerializeField] private CameraRotor cameraRotor;
 
-        private const float SpeedStep = 0.1f;
-        private const float SpeedMin = 0.1f;
-        private const float SpeedMax = 20f;
+        private const int GearMin = 1;
+        private const int GearMax = 5;
         private const float RotorStep = 1f;
         private const float RotorMin = 0f;
         private const float RotorMax = 360f;
@@ -26,7 +25,7 @@ namespace DigitalTwin
         private Button manualBtn;
         private Button autoBtn;
         private Text statusText;
-        private InputField cruiseSpeedInput;
+        private InputField gearInput;
         private InputField rotorSpeedInput;
 
         public Mode Current => currentMode;
@@ -61,11 +60,11 @@ namespace DigitalTwin
                 UIFactory.TextDim, TextAnchor.MiddleLeft);
             SetRect(statusText, new Vector2(0, -116), new Vector2(0, 18), true);
 
-            // 巡航速度设定行（含输入框）
-            cruiseSpeedInput = CreateInputRow(parent, "巡航速度", -146,
-                () => AdjustCruiseSpeed(-SpeedStep),
-                () => AdjustCruiseSpeed(SpeedStep),
-                OnCruiseSpeedInput);
+            // 巡航挡位设定行（含输入框，1~5 挡）
+            gearInput = CreateInputRow(parent, "巡航挡位", -146,
+                () => AdjustGear(-1),
+                () => AdjustGear(1),
+                OnGearInput);
 
             // 云台转速设定行（含输入框）
             rotorSpeedInput = CreateInputRow(parent, "云台转速", -182,
@@ -100,15 +99,15 @@ namespace DigitalTwin
             return input;
         }
 
-        private void OnCruiseSpeedInput(string text)
+        private void OnGearInput(string text)
         {
             if (car == null)
             {
                 return;
             }
-            if (float.TryParse(text, out float v))
+            if (int.TryParse(text, out int v))
             {
-                car.SetCruiseSpeed(Mathf.Clamp(v, SpeedMin, SpeedMax));
+                car.SetCruiseGear(Mathf.Clamp(v, GearMin, GearMax));
             }
             RefreshValues();
         }
@@ -158,18 +157,14 @@ namespace DigitalTwin
                 cameraRotor.SetAutoRotate(mode == Mode.AutoCruise);
             }
 
-            if (statusText != null)
-            {
-                statusText.text = mode == Mode.Manual ? "当前：手动模式" : "当前：自动巡航";
-                statusText.color = mode == Mode.Manual ? UIFactory.TextDim : UIFactory.AccentGreen;
-            }
+            RefreshValues();
         }
 
-        private void AdjustCruiseSpeed(float delta)
+        private void AdjustGear(int delta)
         {
             if (car == null) return;
-            float v = Mathf.Clamp(car.CruiseSpeed + delta, SpeedMin, SpeedMax);
-            car.SetCruiseSpeed(v);
+            int v = Mathf.Clamp(car.CruiseGear + delta, GearMin, GearMax);
+            car.SetCruiseGear(v);
             RefreshValues();
         }
 
@@ -183,13 +178,36 @@ namespace DigitalTwin
 
         private void RefreshValues()
         {
-            if (cruiseSpeedInput != null && car != null)
+            if (gearInput != null && car != null)
             {
-                cruiseSpeedInput.text = $"{car.CruiseSpeed:0.0}";
+                gearInput.text = $"{car.CruiseGear}";
             }
             if (rotorSpeedInput != null && cameraRotor != null)
             {
                 rotorSpeedInput.text = $"{cameraRotor.AutoRotateSpeed:0}";
+            }
+            UpdateStatusText();
+        }
+
+        private void UpdateStatusText()
+        {
+            if (statusText == null)
+            {
+                return;
+            }
+            if (currentMode == Mode.AutoCruise && car != null)
+            {
+                int g = car.CruiseGear;
+                float duty = CarController.GearToDuty(g);
+                float speed = duty * car.DutySpeedFactor;
+                statusText.text = $"当前：自动巡航 挡位{g}（占空比 {duty:0.0}，速度 {speed:0.0} cm/s）";
+                statusText.color = UIFactory.AccentGreen;
+            }
+            else
+            {
+                float max = car != null ? car.MaxSpeed : 0f;
+                statusText.text = $"当前：手动模式（上限 {max:0} cm/s）";
+                statusText.color = UIFactory.TextDim;
             }
         }
 

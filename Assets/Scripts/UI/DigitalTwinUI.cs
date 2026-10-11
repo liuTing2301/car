@@ -414,14 +414,14 @@ namespace DigitalTwin
         private void BuildTelemetryPanel(RectTransform body)
         {
             // 上半：速度数值 + 图表
-            speedText = UIFactory.CreateText(body, "Speed", "速度 0.00 m/s", 20, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
+            speedText = UIFactory.CreateText(body, "Speed", "速度 0.0 cm/s", 20, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
             RectTransform sRT = speedText.GetComponent<RectTransform>();
             sRT.anchorMin = new Vector2(0, 0.75f);
             sRT.anchorMax = new Vector2(0.5f, 1);
             sRT.offsetMin = new Vector2(8, 0);
             sRT.offsetMax = Vector2.zero;
 
-            distanceText = UIFactory.CreateText(body, "Distance", "里程 0.00 m", 16, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
+            distanceText = UIFactory.CreateText(body, "Distance", "里程 0.0 cm", 16, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
             RectTransform dRT = distanceText.GetComponent<RectTransform>();
             dRT.anchorMin = new Vector2(0.5f, 0.75f);
             dRT.anchorMax = new Vector2(1, 1);
@@ -847,8 +847,8 @@ namespace DigitalTwin
         {
             if (car != null)
             {
-                if (speedText != null) speedText.text = $"速度 {car.Speed:0.00} m/s";
-                if (distanceText != null) distanceText.text = $"里程 {car.TotalDistance:0.00} m";
+                if (speedText != null) speedText.text = $"速度 {car.Speed:0.0} cm/s";
+                if (distanceText != null) distanceText.text = $"里程 {car.TotalDistance:0.0} cm";
                 if (speedChart != null) speedChart.AddValue(car.Speed);
                 if (distanceChart != null) distanceChart.AddValue(car.TotalDistance);
             }
