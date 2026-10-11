@@ -18,6 +18,10 @@ namespace DigitalTwin
         [Tooltip("占空比 → 线速度的换算系数（cm/s 每占空比）。0.7 占空比对应 10.4 cm/s，则约 14.86。")]
         [SerializeField] private float dutySpeedFactor = 14.86f;
 
+        [Header("虚拟速度")]
+        [Tooltip("虚拟（软件内）速度 / 实际速度 的比例。大于 1 时软件中小车跑得更快；遥测显示与下发的速度仍为实际值。")]
+        [SerializeField] private float virtualSpeedRatio = 10f;
+
         [Header("自动巡航挡位")]
         [Tooltip("自动巡航挡位 1~5，占空比依次 0.3 / 0.4 / 0.5 / 0.6 / 0.7。")]
         [Range(1, 5)]
@@ -44,6 +48,7 @@ namespace DigitalTwin
         private float initialHeight;
         private float totalDistance;  // cm
         private bool autoCruise;
+        private float diagTimer;
         private readonly List<Transform> wheels = new List<Transform>();
 
         public float Speed => Mathf.Abs(currentSpeed);  // cm/s
@@ -59,6 +64,12 @@ namespace DigitalTwin
             get => dutySpeedFactor;
             set => dutySpeedFactor = Mathf.Max(0.01f, value);
         }
+        /// <summary>虚拟速度 / 实际速度 的比例。</summary>
+        public float VirtualSpeedRatio
+        {
+            get => virtualSpeedRatio;
+            set => virtualSpeedRatio = Mathf.Max(0.1f, value);
+        }
         /// <summary>自动巡航挡位（1~5）。</summary>
         public int CruiseGear
         {
@@ -67,6 +78,8 @@ namespace DigitalTwin
         }
         public float TotalDistance => totalDistance;
         public bool IsAutoCruise => autoCruise;
+        /// <summary>车轮 Transform 列表（只读），供外部获取车轮位置（如绘制轮胎痕迹）。</summary>
+        public IReadOnlyList<Transform> Wheels => wheels;
 
         /// <summary>开启自动巡航时，小车自动以前进油门行驶。</summary>
         public void SetAutoCruise(bool enabled)
@@ -171,6 +184,16 @@ namespace DigitalTwin
             }
 
             RotateWheels(Time.deltaTime);
+
+            // 诊断日志：每 2 秒输出一次，用于定位「车轮转但小车不动」
+            diagTimer += Time.deltaTime;
+            if (diagTimer >= 2f)
+            {
+                diagTimer = 0f;
+                Debug.Log($"[CarController] 模式={(usePhysics ? "物理" : "Transform")} 油门={Throttle:0.00} " +
+                          $"实际速度={currentSpeed:0.00} 上限={SpeedLimit:0.00} 比例={virtualSpeedRatio} " +
+                          $"位置={transform.position} 前进方向={GetMoveDirection()}");
+            }
         }
 
         private void FixedUpdate()
@@ -186,8 +209,10 @@ namespace DigitalTwin
             float targetSpeed = Throttle * SpeedLimit;
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, acceleration * dt);
 
-            transform.position += transform.forward * currentSpeed * dt;
-            totalDistance += Mathf.Abs(currentSpeed) * dt;
+            // 位置按虚拟速度移动（实际速度 × 比例），让软件中小车跑得更快
+            float virtualSpeed = currentSpeed * virtualSpeedRatio;
+            transform.position += GetMoveDirection() * virtualSpeed * dt;
+            totalDistance += Mathf.Abs(virtualSpeed) * dt;
 
             if (keepHeight)
             {
@@ -199,16 +224,30 @@ namespace DigitalTwin
 
         private void MovePhysics()
         {
-            Vector3 forward = transform.forward;
-            forward.y = 0f;
-            forward.Normalize();
+            Vector3 dir = GetMoveDirection();
 
             float targetSpeed = Throttle * SpeedLimit;
             currentSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, acceleration * Time.fixedDeltaTime);
 
-            Vector3 velocity = forward * currentSpeed;
+            float virtualSpeed = currentSpeed * virtualSpeedRatio;
+            Vector3 velocity = dir * virtualSpeed;
             rb.velocity = new Vector3(velocity.x, rb.velocity.y, velocity.z);
-            totalDistance += Mathf.Abs(currentSpeed) * Time.fixedDeltaTime;
+            totalDistance += Mathf.Abs(virtualSpeed) * Time.fixedDeltaTime;
+        }
+
+        /// <summary>
+        /// 取水平前进方向：在 forward / right 中选水平分量最大的轴。
+        /// 避免模型轴向不正（forward 朝上/朝下）时水平投影为零导致小车完全不动。
+        /// </summary>
+        private Vector3 GetMoveDirection()
+        {
+            Vector3 f = transform.forward;
+            f.y = 0f;
+            Vector3 r = transform.right;
+            r.y = 0f;
+
+            Vector3 dir = f.sqrMagnitude >= r.sqrMagnitude ? f : r;
+            return dir.sqrMagnitude < 1e-4f ? Vector3.forward : dir.normalized;
         }
 
         /// <summary>当前模式下的速度上限（cm/s）：自动巡航用挡位速度，手动用手动上限。</summary>
@@ -223,8 +262,8 @@ namespace DigitalTwin
                 return;
             }
 
-            // currentSpeed 为 cm/s，wheelSpinSpeed 为 度/cm
-            float angle = currentSpeed * wheelSpinSpeed * dt;
+            // currentSpeed 为实际 cm/s，车轮转速需匹配虚拟移动速度
+            float angle = currentSpeed * virtualSpeedRatio * wheelSpinSpeed * dt;
             foreach (Transform w in wheels)
             {
                 if (w != null)

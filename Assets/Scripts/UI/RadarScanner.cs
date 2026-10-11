@@ -50,7 +50,7 @@ namespace DigitalTwin
             // 构建时布局可能未计算，给一个保底尺寸
             if (pw <= 1f) pw = 280f;
             if (ph <= 1f) ph = 280f;
-            float size = Mathf.Min(pw, ph) - 20;
+            float size = Mathf.Min(pw, ph) * 0.7f;
 
             // 雷达盘容器
             GameObject diskGO = new GameObject("RadarDisk", typeof(RectTransform), typeof(Image));
@@ -100,6 +100,8 @@ namespace DigitalTwin
             cloudTexture = new Texture2D(cloudResolution, cloudResolution, TextureFormat.RGBA32, false);
             cloudPixels = new Color32[cloudResolution * cloudResolution];
             ClearCloudTexture();
+            // 新建纹理内容未定义（默认白色），必须显式上传透明像素，否则无点云时会显示白色遮罩
+            UploadCloudTexture();
             cloudImage.texture = cloudTexture;
 
             // 中心点
@@ -286,6 +288,16 @@ namespace DigitalTwin
                 SetCloudPixel(px, py, res);
             }
 
+            UploadCloudTexture();
+        }
+
+        /// <summary>把 CPU 端点云像素上传到纹理。</summary>
+        private void UploadCloudTexture()
+        {
+            if (cloudTexture == null || cloudPixels == null)
+            {
+                return;
+            }
             cloudTexture.SetPixels32(cloudPixels);
             cloudTexture.Apply();
         }

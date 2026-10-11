@@ -42,32 +42,32 @@ namespace DigitalTwin
             // 标题
             Text title = UIFactory.CreateText(parent, "ModeTitle", "驾驶模式", 16, UIFactory.AccentCyan,
                 TextAnchor.MiddleLeft, FontStyle.Bold);
-            SetRect(title, new Vector2(0, -8), new Vector2(0, 22), true);
+            SetRect(title, new Vector2(0, -10), new Vector2(0, 24), true);
 
             // 手动模式按钮
             manualBtn = UIFactory.CreateButton(parent, "ManualBtn", "手动模式", 15);
-            SetRect(manualBtn, new Vector2(0, -36), new Vector2(0, 34), true);
+            SetRect(manualBtn, new Vector2(0, -40), new Vector2(0, 36), true);
 
             // 自动巡航按钮
             autoBtn = UIFactory.CreateButton(parent, "AutoBtn", "自动巡航", 15);
-            SetRect(autoBtn, new Vector2(0, -74), new Vector2(0, 34), true);
+            SetRect(autoBtn, new Vector2(0, -80), new Vector2(0, 36), true);
 
             manualBtn.onClick.AddListener(() => SetMode(Mode.Manual));
             autoBtn.onClick.AddListener(() => SetMode(Mode.AutoCruise));
 
-            // 状态文字
+            // 状态文字（两行）
             statusText = UIFactory.CreateText(parent, "ModeStatus", "当前：手动模式", 13,
-                UIFactory.TextDim, TextAnchor.MiddleLeft);
-            SetRect(statusText, new Vector2(0, -116), new Vector2(0, 18), true);
+                UIFactory.TextDim, TextAnchor.UpperLeft);
+            SetRect(statusText, new Vector2(0, -122), new Vector2(0, 36), true);
 
             // 巡航挡位设定行（含输入框，1~5 挡）
-            gearInput = CreateInputRow(parent, "巡航挡位", -146,
+            gearInput = CreateInputRow(parent, "巡航挡位", -166,
                 () => AdjustGear(-1),
                 () => AdjustGear(1),
                 OnGearInput);
 
             // 云台转速设定行（含输入框）
-            rotorSpeedInput = CreateInputRow(parent, "云台转速", -182,
+            rotorSpeedInput = CreateInputRow(parent, "云台转速", -204,
                 () => AdjustRotorSpeed(-RotorStep),
                 () => AdjustRotorSpeed(RotorStep),
                 OnRotorSpeedInput);
@@ -84,16 +84,16 @@ namespace DigitalTwin
             SetRect(lab, new Vector2(0, y), new Vector2(78, 24), false);
 
             Button minus = UIFactory.CreateButton(parent, label + "_Minus", "-", 14);
-            SetRect(minus, new Vector2(82, y), new Vector2(24, 24), false);
+            SetRect(minus, new Vector2(82, y), new Vector2(26, 24), false);
             minus.onClick.AddListener(onMinus);
 
             InputField input = UIFactory.CreateInputField(parent, label + "_Input", "", 13,
                 InputField.ContentType.DecimalNumber);
-            SetRect(input, new Vector2(110, y), new Vector2(60, 24), false);
+            SetRect(input, new Vector2(112, y), new Vector2(126, 24), false);
             input.onEndEdit.AddListener(onEnd);
 
             Button plus = UIFactory.CreateButton(parent, label + "_Plus", "+", 14);
-            SetRect(plus, new Vector2(174, y), new Vector2(24, 24), false);
+            SetRect(plus, new Vector2(242, y), new Vector2(26, 24), false);
             plus.onClick.AddListener(onPlus);
 
             return input;
@@ -200,13 +200,13 @@ namespace DigitalTwin
                 int g = car.CruiseGear;
                 float duty = CarController.GearToDuty(g);
                 float speed = duty * car.DutySpeedFactor;
-                statusText.text = $"当前：自动巡航 挡位{g}（占空比 {duty:0.0}，速度 {speed:0.0} cm/s）";
+                statusText.text = $"自动巡航 · {g} 挡（占空比 {duty:0.0}）\n速度 {speed:0.0} cm/s";
                 statusText.color = UIFactory.AccentGreen;
             }
             else
             {
                 float max = car != null ? car.MaxSpeed : 0f;
-                statusText.text = $"当前：手动模式（上限 {max:0} cm/s）";
+                statusText.text = $"手动模式（上限 {max:0} cm/s）\nW/S 控制前后";
                 statusText.color = UIFactory.TextDim;
             }
         }

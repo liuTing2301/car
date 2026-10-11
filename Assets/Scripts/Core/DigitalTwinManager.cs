@@ -171,7 +171,7 @@ namespace DigitalTwin
 
             GameObject pipeModelGO = new GameObject("DynamicPipeModel");
             dynamicPipeModel = pipeModelGO.AddComponent<DynamicPipeModel>();
-            dynamicPipeModel.Setup(robotDataReader, carTransform);
+            dynamicPipeModel.Setup(carTransform, carController);
             pipeModelGO.SetActive(false); // 默认隐藏，点「管道模型」查看
 
             pointCloudRebuilder = GetComponent<PointCloudRebuilder>();

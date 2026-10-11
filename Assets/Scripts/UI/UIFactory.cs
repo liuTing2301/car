@@ -9,16 +9,24 @@ namespace DigitalTwin
     /// </summary>
     public static class UIFactory
     {
-        // 科幻配色
-        public static readonly Color BgDark = new Color(0.02f, 0.05f, 0.08f, 0.88f);
-        public static readonly Color BgPanel = new Color(0.04f, 0.08f, 0.12f, 0.82f);
-        public static readonly Color BorderCyan = new Color(0.0f, 0.85f, 0.95f, 0.9f);
-        public static readonly Color BorderDim = new Color(0.0f, 0.6f, 0.7f, 0.4f);
-        public static readonly Color TextPrimary = new Color(0.85f, 0.95f, 1f);
-        public static readonly Color TextDim = new Color(0.5f, 0.65f, 0.75f);
-        public static readonly Color AccentCyan = new Color(0.0f, 0.85f, 0.95f);
-        public static readonly Color AccentGreen = new Color(0.2f, 1f, 0.55f);
-        public static readonly Color AccentOrange = new Color(1f, 0.6f, 0.2f);
+        // ===== 深空未来感配色 =====
+        /// <summary>深空底色：用作 3D 主相机背景，让 3D 区域自带深空通透感。</summary>
+        public static readonly Color BgRoot = new Color(0.012f, 0.024f, 0.052f, 1f);
+        /// <summary>顶栏 / 子面板底色。</summary>
+        public static readonly Color BgDark = new Color(0.024f, 0.052f, 0.098f, 0.92f);
+        /// <summary>主面板底色。</summary>
+        public static readonly Color BgPanel = new Color(0.035f, 0.072f, 0.132f, 0.86f);
+        public static readonly Color BorderCyan = new Color(0.0f, 0.86f, 1f, 0.9f);
+        public static readonly Color BorderDim = new Color(0.0f, 0.52f, 0.72f, 0.38f);
+        public static readonly Color TextPrimary = new Color(0.88f, 0.96f, 1f);
+        public static readonly Color TextDim = new Color(0.44f, 0.62f, 0.76f);
+        public static readonly Color AccentCyan = new Color(0.0f, 0.90f, 1f);
+        public static readonly Color AccentGreen = new Color(0.25f, 1f, 0.62f);
+        public static readonly Color AccentOrange = new Color(1f, 0.64f, 0.22f);
+        public static readonly Color AccentPurple = new Color(0.66f, 0.46f, 1f);
+        public static readonly Color AccentBlue = new Color(0.26f, 0.62f, 1f);
+        /// <summary>面板顶部微光（青色冷光）。</summary>
+        public static readonly Color PanelGlow = new Color(0.0f, 0.85f, 1f, 0.16f);
 
         private static Font _font;
         public static Font Font
@@ -34,7 +42,25 @@ namespace DigitalTwin
             }
         }
 
-        /// <summary>创建一个带圆角感（用多边框模拟）的面板。</summary>
+        /// <summary>生成竖向渐变纹理（top 亮 → bottom 透明），用于面板顶部冷光。</summary>
+        public static Texture2D CreateFadeTexture(int height, Color top)
+        {
+            Texture2D tex = new Texture2D(1, height, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+
+            Color[] px = new Color[height];
+            for (int i = 0; i < height; i++)
+            {
+                float t = i / (float)(height - 1);
+                px[i] = new Color(top.r, top.g, top.b, top.a * t); // 底部透明
+            }
+            tex.SetPixels(px);
+            tex.Apply();
+            return tex;
+        }
+
+        /// <summary>创建带圆角感（用多边框模拟）的面板。</summary>
         public static RectTransform CreatePanel(Transform parent, string name, Color bg, Color border)
         {
             GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
@@ -70,7 +96,74 @@ namespace DigitalTwin
             iRT.offsetMin = new Vector2(1, 1);
             iRT.offsetMax = new Vector2(-1, -1);
 
-            return go.GetComponent<RectTransform>();
+            // 统一装饰：顶部冷光 + 四角 L 形角标（营造未来科技感）
+            RectTransform rt = go.GetComponent<RectTransform>();
+            AddTopGlow(rt, 60f);
+            AddCornerBrackets(rt, border);
+
+            return rt;
+        }
+
+        /// <summary>面板顶部向下淡出的青色冷光。</summary>
+        public static void AddTopGlow(RectTransform panel, float height)
+        {
+            GameObject go = new GameObject("TopGlow", typeof(RectTransform), typeof(RawImage));
+            go.transform.SetParent(panel, false);
+
+            RawImage ri = go.GetComponent<RawImage>();
+            ri.texture = FadeTexture;
+            ri.color = Color.white;
+            ri.raycastTarget = false;
+
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0, 1);
+            rt.anchorMax = new Vector2(1, 1);
+            rt.pivot = new Vector2(0.5f, 1);
+            rt.anchoredPosition = Vector2.zero;
+            rt.sizeDelta = new Vector2(0, height);
+        }
+
+        private static Texture2D _fadeTex;
+        private static Texture2D FadeTexture
+        {
+            get
+            {
+                if (_fadeTex == null)
+                {
+                    _fadeTex = CreateFadeTexture(64, PanelGlow);
+                }
+                return _fadeTex;
+            }
+        }
+
+        /// <summary>面板四角 L 形装饰角标。</summary>
+        public static void AddCornerBrackets(RectTransform panel, Color color)
+        {
+            const float len = 22f;
+            const float thick = 2.5f;
+            Vector2[] corners = { new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, 0), new Vector2(1, 0) };
+            foreach (Vector2 c in corners)
+            {
+                AddBracketLine(panel, c, new Vector2(len, thick), color);
+                AddBracketLine(panel, c, new Vector2(thick, len), color);
+            }
+        }
+
+        private static void AddBracketLine(RectTransform parent, Vector2 anchor, Vector2 size, Color color)
+        {
+            GameObject go = new GameObject("Bracket", typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+
+            Image img = go.GetComponent<Image>();
+            img.color = color;
+            img.raycastTarget = false;
+
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = anchor;
+            rt.anchorMax = anchor;
+            rt.pivot = anchor;
+            rt.anchoredPosition = Vector2.zero;
+            rt.sizeDelta = size;
         }
 
         public static Text CreateText(Transform parent, string name, string content, int size,
