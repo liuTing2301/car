@@ -17,6 +17,9 @@ namespace DigitalTwin
         [Tooltip("发送间隔（秒），默认 0.05s = 20Hz。")]
         [SerializeField] private float interval = 0.05f;
 
+        [Tooltip("摄像头电机最大转速（度/秒），对应占空比 1。下发的 camera_motor_speed 为 转速/该值。")]
+        [SerializeField] private float cameraMotorMaxSpeed = 120f;
+
         private float timer;
 
         public void Setup(RobotDataReader reader, CarController car, CameraRotor cameraRotor)
@@ -57,22 +60,23 @@ namespace DigitalTwin
                 pkt.drive_mode = car.IsAutoCruise ? "auto" : "manual";
             }
 
-            // 摄像头电机：手动按 E 键用手动转速，自动巡航环扫用自动转速，否则停转
+            // 摄像头电机：手动按 Q（正转）/ E（反转）用手动转速，自动巡航环扫用自动转速，否则停转。
+            // 下发的是占空比（转速 / 最大转速），正负号表示转向，范围 -1 ~ 1；120°/s 对应占空比 1。
             if (cameraRotor != null)
             {
-                if (Input.GetKey(KeyCode.E))
+                float speed = 0f;
+                if (cameraRotor.IsAutoRotating)
                 {
-                    pkt.camera_motor_speed = cameraRotor.ManualRotateSpeed;
+                    // 自动巡航：下发带方向的速度（正转/反转往复），此时忽略手动输入
+                    speed = cameraRotor.CurrentAutoRotateSpeed;
                 }
-                else if (cameraRotor.IsAutoRotating)
+                else if (Input.GetKey(KeyCode.Q) || Input.GetKey(KeyCode.E))
                 {
-                    // 自动巡航：下发带方向的速度（正转/反转往复）
-                    pkt.camera_motor_speed = cameraRotor.CurrentAutoRotateSpeed;
+                    // 手动旋转：Q 正转 / E 反转（带正负号）
+                    speed = cameraRotor.CurrentManualRotateSpeed;
                 }
-                else
-                {
-                    pkt.camera_motor_speed = 0;
-                }
+
+                pkt.camera_motor_speed = Mathf.Clamp(speed / cameraMotorMaxSpeed, -1f, 1f);
             }
 
             robotDataReader.SendControl(pkt);

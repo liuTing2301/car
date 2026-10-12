@@ -113,6 +113,26 @@ namespace DigitalTwin
             }
         }
 
+        /// <summary>删除一个本地存档（含 model.bin / meta.json / images），成功返回 true。</summary>
+        public static bool Delete(string dir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+                {
+                    return false;
+                }
+                Directory.Delete(dir, true);
+                Debug.Log($"[PointCloudArchive] 已删除存档：{dir}");
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[PointCloudArchive] 删除失败：{e.Message}");
+                return false;
+            }
+        }
+
         /// <summary>保存一次建模，成功返回存档目录，失败返回 null。</summary>
         public static string Save(Vector3[][] sections, float avgRadius, List<DefectSaveData> defects)
         {

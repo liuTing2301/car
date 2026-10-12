@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
+using DigitalTwin.Scripting;
 
 namespace DigitalTwin
 {
     /// <summary>
-    /// 数字孪生主界面：参考"智能工程装备数字孪生平台"风格，
-    /// 构建顶部标题栏、左侧传感器/模式栏、右侧遥测+雷达+摄像头面板。
+    /// 数字孪生主界面：参照《管道探测小车 · 数字孪生平台》原型构建。
+    /// 顶部栏（品牌 / 状态 / 时间 / 退出）+ 左侧设备操作栏（连接 / 驾驶模式 / 数字建模）
+    /// + 中栏（检测读数带 · 三维舞台 · 行驶状态带）+ 右侧感知栏（摄像头识别 / 雷达扫描）+ 底部状态栏。
     /// 由 DigitalTwinManager 在运行时自动装配。
     /// </summary>
     public class DigitalTwinUI : MonoBehaviour
@@ -25,7 +27,12 @@ namespace DigitalTwin
 
         private Canvas canvas;
         private Text timeText;
+        private Text dateText;
         private Text statusText;
+        private Image statusChipImg;
+        private Text stageModeText;
+        private Text travelStateText;
+        private Text footerText;
 
         private Text speedText;
         private Text distanceText;
@@ -53,6 +60,7 @@ namespace DigitalTwin
         private GameObject rebuildPanel;
         private RawImage rebuildPreview;
         private Text rebuildStatusText;
+        private Button backToLiveBtn;
         private Text noticeText;
         private float noticeTimer;
         private GameObject archivePanel;
@@ -119,15 +127,34 @@ namespace DigitalTwin
         private float radarMockTimer;
         private bool pointCloudActive;
 
+        // ===== 脚本编写 =====
+        private ScriptRunner scriptRunner;
+        private GameObject scriptPanel;
+        private InputField scriptInput;
+        private ScrollRect scriptScroll;
+        private RectTransform scriptViewportRect;
+        private int scriptFontSize = 14;
+        private Text scriptStatusText;
+        private Text scriptOutputText;
+        private ScrollRect scriptOutputScroll;
+        private string scriptOutputCache;
+        private GameObject scriptListPanel;
+        private RectTransform scriptListContainer;
+        private GameObject scriptNamePanel;
+        private InputField scriptNameInput;
+        private string scriptMsg;
+        private float scriptMsgTimer;
+        private bool scriptMsgError;
+
         // ===== 布局尺寸（参考分辨率 1920×1080）=====
-        private const float TopBarHeight = 68f;
+        private const float TopBarHeight = 64f;
+        private const float FooterHeight = 30f;
         /// <summary>左右侧栏统一宽度（保证左右长度对齐）。</summary>
         private const float SideBarWidth = 400f;
-        private const float BarMargin = 14f;
+        private const float BarMargin = 12f;
 
         // ===== 视觉特效 =====
         private static readonly Color GlowLine = new Color(0f, 0.9f, 1f, 1f);
-        private readonly List<Image> pulsingBorders = new List<Image>();
         private RectTransform scanLineRT;
 
         // ===== 侧栏展开 / 收起（横向）=====
@@ -145,6 +172,23 @@ namespace DigitalTwin
         private bool rightCollapsed;
         private bool sidebarsInited;
         private const float SidebarAnimSpeed = 2400f;
+
+        // ===== 数据面板（检测数据 / 行驶状态）展开 / 收起（纵向）=====
+        private RectTransform readoutBandRect;
+        private RectTransform travelBandRect;
+        private RectTransform stageRect;
+        private RectTransform topDataToggleRect;
+        private RectTransform bottomDataToggleRect;
+        private Text topDataToggleLabel;
+        private Text bottomDataToggleLabel;
+        private float readoutT;
+        private float travelT;
+        private bool readoutCollapsed;
+        private bool travelCollapsed;
+        private const float ReadoutBandHeight = 104f;
+        private const float TravelBandHeight = 190f;
+        private const float StageToolbarHeight = 44f;
+        private const float StageCoordsHeight = 34f;
 
         // ===== 网格地板 =====
         [Header("网格地板")]
@@ -184,7 +228,7 @@ namespace DigitalTwin
         private bool[] hasWheelPos;
         private bool trailInited;
 
-        public void Setup(CarController car, Transform carTransform, DigitalTwinClient client, CameraReceiver cam, CameraRotor cameraRotor, RobotDataReader robotDataReader, DynamicPipeModel dynamicPipeModel, PointCloudRebuilder pointCloudRebuilder)
+        public void Setup(CarController car, Transform carTransform, DigitalTwinClient client, CameraReceiver cam, CameraRotor cameraRotor, RobotDataReader robotDataReader, DynamicPipeModel dynamicPipeModel, PointCloudRebuilder pointCloudRebuilder, ScriptRunner scriptRunner)
         {
             this.car = car;
             this.carTransform = carTransform;
@@ -194,6 +238,7 @@ namespace DigitalTwin
             this.robotDataReader = robotDataReader;
             this.dynamicPipeModel = dynamicPipeModel;
             this.pointCloudRebuilder = pointCloudRebuilder;
+            this.scriptRunner = scriptRunner;
         }
 
         private void Start()
@@ -205,12 +250,17 @@ namespace DigitalTwin
             BuildCanvas();
             BuildTopBar();
             BuildLeftSidebar();
+            BuildCenterColumn();
             BuildRightColumn();
+            BuildFooter();
             BuildSidebarToggles();
             BuildChartPanel();
             BuildRebuildPanel();
             BuildArchivePanel();
             BuildImagePanel();
+            BuildScriptPanel();
+            BuildScriptListPanel();
+            BuildScriptNamePanel();
             CreateAimMarker();
             BuildQuitConfirm();
             WireCamera();
@@ -231,7 +281,12 @@ namespace DigitalTwin
             UpdateTrail();
             UpdateNotice();
             UpdateSidebars();
+            UpdateDataBands();
             UpdateWindows();
+            UpdateScriptEditorLayout();
+            UpdateScriptZoom();
+            UpdateScriptStatus();
+            UpdateScriptOutput();
             HandleQuitInput();
         }
 
@@ -624,50 +679,10 @@ namespace DigitalTwin
             Debug.Log($"[DigitalTwinUI] 主相机 '{main.name}' 背景已设为深空色 {UIFactory.BgRoot}");
         }
 
-        /// <summary>注册面板边框，使其随时间脉动发光。</summary>
-        private void RegisterPulseBorder(RectTransform panel)
-        {
-            Transform border = panel.Find("Border");
-            if (border == null)
-            {
-                return;
-            }
-            Image img = border.GetComponent<Image>();
-            if (img != null)
-            {
-                pulsingBorders.Add(img);
-            }
-        }
-
-        /// <summary>创建主面板（边框随时间脉动发光）。</summary>
-        private RectTransform CreateDecoratedPanel(Transform parent, string name, Color bg, Color border, bool pulse)
-        {
-            RectTransform panel = UIFactory.CreatePanel(parent, name, bg, border);
-            if (pulse)
-            {
-                RegisterPulseBorder(panel);
-            }
-            return panel;
-        }
-
-        /// <summary>视觉特效驱动：边框脉动 + 顶栏扫描线。</summary>
+        /// <summary>视觉特效驱动：顶栏扫描线。</summary>
         private void UpdateVisualEffects()
         {
             float t = Time.time;
-
-            // 边框呼吸脉动（0.45 ~ 1.0）
-            float pulse = 0.45f + 0.55f * (0.5f + 0.5f * Mathf.Sin(t * 2f));
-            for (int i = 0; i < pulsingBorders.Count; i++)
-            {
-                Image img = pulsingBorders[i];
-                if (img == null)
-                {
-                    continue;
-                }
-                Color c = img.color;
-                c.a = pulse;
-                img.color = c;
-            }
 
             // 顶栏扫描线自左向右循环
             if (scanLineRT != null)
@@ -690,87 +705,80 @@ namespace DigitalTwin
         // ===================== 顶部栏 =====================
         private void BuildTopBar()
         {
-            RectTransform bar = CreateDecoratedPanel(canvas.transform, "TopBar", UIFactory.BgDark, UIFactory.BorderCyan, true);
+            RectTransform bar = UIFactory.CreatePanel(canvas.transform, "TopBar", UIFactory.BgDark, UIFactory.BorderCyan, false);
             bar.anchorMin = new Vector2(0, 1);
             bar.anchorMax = new Vector2(1, 1);
             bar.pivot = new Vector2(0.5f, 1);
-            bar.anchoredPosition = new Vector2(0, -6);
-            bar.sizeDelta = new Vector2(-BarMargin * 2, TopBarHeight);
+            bar.anchoredPosition = Vector2.zero;
+            bar.sizeDelta = new Vector2(0, TopBarHeight);
 
-            // 左侧 Logo + 标题
-            Text logo = UIFactory.CreateText(bar, "Logo", "◉", 28, UIFactory.AccentCyan, TextAnchor.MiddleCenter);
-            RectTransform lRT = logo.GetComponent<RectTransform>();
-            lRT.anchorMin = new Vector2(0, 0);
-            lRT.anchorMax = new Vector2(0, 1);
-            lRT.pivot = new Vector2(0, 0.5f);
-            lRT.anchoredPosition = new Vector2(16, 0);
-            lRT.sizeDelta = new Vector2(40, 0);
+            // 品牌图标（蓝色方块）
+            RectTransform mark = UIFactory.CreatePanel(bar, "BrandMark", new Color(0.30f, 0.44f, 0.62f, 1f), UIFactory.AccentCyan);
+            mark.anchorMin = new Vector2(0, 0.5f);
+            mark.anchorMax = new Vector2(0, 0.5f);
+            mark.pivot = new Vector2(0, 0.5f);
+            mark.anchoredPosition = new Vector2(18, 0);
+            mark.sizeDelta = new Vector2(34, 34);
+            Text markIcon = UIFactory.CreateText(mark, "Icon", "◎", 20, Color.white, TextAnchor.MiddleCenter, FontStyle.Bold);
+            FillRect(markIcon);
 
-            Text title = UIFactory.CreateText(bar, "Title", "管道探测小车 · 数字孪生平台", 20, UIFactory.TextPrimary,
-                TextAnchor.MiddleLeft, FontStyle.Bold);
+            // 标题 / 副标题
+            Text title = UIFactory.CreateText(bar, "Title", "管道探测小车", 18, UIFactory.TextPrimary, TextAnchor.LowerLeft, FontStyle.Bold);
             RectTransform tRT = title.GetComponent<RectTransform>();
             tRT.anchorMin = new Vector2(0, 0.5f);
-            tRT.anchorMax = new Vector2(0.6f, 1);
+            tRT.anchorMax = new Vector2(0, 1);
             tRT.pivot = new Vector2(0, 0.5f);
-            tRT.anchoredPosition = new Vector2(60, 0);
-            tRT.sizeDelta = new Vector2(480, 0);
+            tRT.anchoredPosition = new Vector2(64, 3);
+            tRT.sizeDelta = new Vector2(400, 0);
 
-            Text subtitle = UIFactory.CreateText(bar, "Subtitle", "PIPE INSPECTION DIGITAL TWIN · 智能管道检测", 10,
-                UIFactory.AccentCyan, TextAnchor.MiddleLeft);
+            Text subtitle = UIFactory.CreateText(bar, "Subtitle", "数字孪生平台", 12, UIFactory.TextDim, TextAnchor.UpperLeft);
             RectTransform stRT = subtitle.GetComponent<RectTransform>();
             stRT.anchorMin = new Vector2(0, 0);
-            stRT.anchorMax = new Vector2(0.6f, 0.5f);
+            stRT.anchorMax = new Vector2(0, 0.5f);
             stRT.pivot = new Vector2(0, 0.5f);
-            stRT.anchoredPosition = new Vector2(60, 0);
-            stRT.sizeDelta = new Vector2(480, 0);
+            stRT.anchoredPosition = new Vector2(64, -3);
+            stRT.sizeDelta = new Vector2(400, 0);
 
-            // 右侧：状态 / 时间 / 退出，自右向左依次排布（固定右侧锚点，避免互相重叠）
-            statusText = UIFactory.CreateText(bar, "Status", "● 系统就绪", 14, UIFactory.AccentGreen, TextAnchor.MiddleRight);
-            RectTransform sRT = statusText.GetComponent<RectTransform>();
-            sRT.anchorMin = new Vector2(1, 0);
-            sRT.anchorMax = new Vector2(1, 1);
-            sRT.pivot = new Vector2(1, 0.5f);
-            sRT.anchoredPosition = new Vector2(-396, 0);
-            sRT.sizeDelta = new Vector2(180, 0);
+            // 状态胶囊：本地模式 + 连接状态
+            Text modeChipText;
+            CreateChip(bar, "ModeChip", "本地模式", UIFactory.TextDim, 240f, 84f, out modeChipText);
+            statusChipImg = CreateChip(bar, "StatusChip", "未连接", UIFactory.AccentOrange, 334f, 96f, out statusText);
 
-            timeText = UIFactory.CreateText(bar, "Time", "", 15, UIFactory.TextPrimary, TextAnchor.MiddleRight);
+            // 右侧：时间 / 日期 / 退出
+            timeText = UIFactory.CreateText(bar, "Time", "", 15, UIFactory.TextPrimary, TextAnchor.LowerRight);
             RectTransform tiRT = timeText.GetComponent<RectTransform>();
-            tiRT.anchorMin = new Vector2(1, 0);
+            tiRT.anchorMin = new Vector2(1, 0.5f);
             tiRT.anchorMax = new Vector2(1, 1);
             tiRT.pivot = new Vector2(1, 0.5f);
-            tiRT.anchoredPosition = new Vector2(-100, 0);
-            tiRT.sizeDelta = new Vector2(280, 0);
+            tiRT.anchoredPosition = new Vector2(-104, 3);
+            tiRT.sizeDelta = new Vector2(260, 0);
 
-            // 退出按钮：警示红底色 + 描边，突出且易点击
+            dateText = UIFactory.CreateText(bar, "Date", "", 11, UIFactory.TextDim, TextAnchor.UpperRight);
+            RectTransform daRT = dateText.GetComponent<RectTransform>();
+            daRT.anchorMin = new Vector2(1, 0);
+            daRT.anchorMax = new Vector2(1, 0.5f);
+            daRT.pivot = new Vector2(1, 0.5f);
+            daRT.anchoredPosition = new Vector2(-104, -3);
+            daRT.sizeDelta = new Vector2(260, 0);
+
+            // 退出按钮（危险色）
             Button quitBtn = UIFactory.CreateButton(bar, "QuitBtn", "退出", 14);
             RectTransform qRT = quitBtn.GetComponent<RectTransform>();
             qRT.anchorMin = new Vector2(1, 0.5f);
             qRT.anchorMax = new Vector2(1, 0.5f);
             qRT.pivot = new Vector2(1, 0.5f);
-            qRT.anchoredPosition = new Vector2(-14, 0);
-            qRT.sizeDelta = new Vector2(72, 34);
-
+            qRT.anchoredPosition = new Vector2(-16, 0);
+            qRT.sizeDelta = new Vector2(76, 34);
             Image qImg = quitBtn.GetComponent<Image>();
-            qImg.color = new Color(0.20f, 0.06f, 0.09f, 0.95f);
-
+            qImg.color = Color.white; // 颜色交给 ColorBlock
             ColorBlock qcb = quitBtn.colors;
-            qcb.normalColor = new Color(0.20f, 0.06f, 0.09f, 0.95f);
-            qcb.highlightedColor = new Color(0.42f, 0.10f, 0.14f, 1f);
-            qcb.pressedColor = new Color(0.60f, 0.14f, 0.18f, 1f);
-            qcb.selectedColor = new Color(0.42f, 0.10f, 0.14f, 1f);
+            qcb.normalColor = new Color(0.30f, 0.13f, 0.13f, 1f);
+            qcb.highlightedColor = new Color(0.42f, 0.18f, 0.18f, 1f);
+            qcb.pressedColor = new Color(0.50f, 0.20f, 0.20f, 1f);
+            qcb.selectedColor = new Color(0.42f, 0.18f, 0.18f, 1f);
             quitBtn.colors = qcb;
-
-            Outline qOutline = quitBtn.gameObject.AddComponent<Outline>();
-            qOutline.effectColor = new Color(1f, 0.42f, 0.38f, 0.85f);
-            qOutline.effectDistance = new Vector2(1.4f, 1.4f);
-
             Text qLabel = quitBtn.GetComponentInChildren<Text>();
-            if (qLabel != null)
-            {
-                qLabel.color = new Color(1f, 0.84f, 0.82f);
-                qLabel.fontStyle = FontStyle.Bold;
-            }
-
+            if (qLabel != null) qLabel.color = UIFactory.Danger;
             quitBtn.onClick.AddListener(ShowQuitConfirm);
 
             // 顶部横向扫描光柱（UpdateVisualEffects 驱动，从左向右循环）
@@ -787,16 +795,52 @@ namespace DigitalTwin
             scanLineRT.sizeDelta = new Vector2(70f, 0f);
         }
 
+        /// <summary>把一个 UI 元素铺满父级（可指定左右内边距）。</summary>
+        private static void FillRect(Component c, float padX = 0f)
+        {
+            RectTransform rt = c.GetComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = new Vector2(padX, 0);
+            rt.offsetMax = new Vector2(-padX, 0);
+        }
+
+        /// <summary>创建一个左侧锚定的状态胶囊，返回其背景图（用于切换状态色）。</summary>
+        private Image CreateChip(RectTransform parent, string name, string label, Color textColor,
+            float x, float width, out Text text)
+        {
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(parent, false);
+            Image bg = go.GetComponent<Image>();
+            bg.color = new Color(0.1647f, 0.1882f, 0.2157f, 1f);
+            bg.raycastTarget = false;
+            UIFactory.ApplyRounded(bg);
+
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0, 0.5f);
+            rt.anchorMax = new Vector2(0, 0.5f);
+            rt.pivot = new Vector2(0, 0.5f);
+            rt.anchoredPosition = new Vector2(x, 0);
+            rt.sizeDelta = new Vector2(width, 26);
+
+            text = UIFactory.CreateText(go.transform, "Text", label, 12, textColor, TextAnchor.MiddleCenter);
+            RectTransform tRT = text.GetComponent<RectTransform>();
+            tRT.anchorMin = Vector2.zero;
+            tRT.anchorMax = Vector2.one;
+            tRT.offsetMin = new Vector2(8, 0);
+            tRT.offsetMax = new Vector2(-8, 0);
+            return bg;
+        }
+
         // ===================== 左侧栏 =====================
         private void BuildLeftSidebar()
         {
-            RectTransform sidebar = CreateDecoratedPanel(canvas.transform, "LeftSidebar", UIFactory.BgPanel, UIFactory.BorderCyan, true);
+            RectTransform sidebar = UIFactory.CreatePanel(canvas.transform, "LeftSidebar", UIFactory.BgPanel, UIFactory.BorderCyan);
             sidebar.anchorMin = new Vector2(0, 0);
             sidebar.anchorMax = new Vector2(0, 1);
             sidebar.pivot = new Vector2(0, 0.5f);
-            sidebar.anchoredPosition = new Vector2(BarMargin, -33);
-            sidebar.sizeDelta = new Vector2(SideBarWidth, -94);
-
+            sidebar.anchoredPosition = new Vector2(BarMargin, (FooterHeight - TopBarHeight) * 0.5f);
+            sidebar.sizeDelta = new Vector2(SideBarWidth, -(TopBarHeight + FooterHeight + BarMargin * 2));
             leftSidebarRect = sidebar;
             sidebarsInited = false;
 
@@ -806,59 +850,41 @@ namespace DigitalTwin
             RectTransform content = contentGO.GetComponent<RectTransform>();
             content.anchorMin = Vector2.zero;
             content.anchorMax = Vector2.one;
-            content.offsetMin = new Vector2(8, 8);
-            content.offsetMax = new Vector2(-8, -8);
+            content.offsetMin = new Vector2(14, 14);
+            content.offsetMax = new Vector2(-14, -14);
 
-            float y = -10;
+            float y = -4;
 
-            // 连接设置（IP / 端口运行中可修改）
-            Text secConn = UIFactory.CreateText(content, "SecConn", "▎ 连接设置", 16, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
-            LayoutY(secConn, ref y, 26);
+            // ---- 连接设置（IP / 端口运行中可修改）----
+            AddSectionHeader(content, "连接设置", ref y);
 
             Text ipLabel = UIFactory.CreateText(content, "IpLabel", "IP 地址", 12, UIFactory.TextDim, TextAnchor.MiddleLeft);
-            LayoutY(ipLabel, ref y, 16);
+            LayoutY(ipLabel, ref y, 15);
 
             ipInput = UIFactory.CreateInputField(content, "IpInput", robotDataReader != null ? robotDataReader.ServerIp : "10.130.38.131", 13);
-            Layout(ipInput, ref y, 26);
+            Layout(ipInput, ref y, 30);
 
             Text portLabel = UIFactory.CreateText(content, "PortLabel", "端口", 12, UIFactory.TextDim, TextAnchor.MiddleLeft);
-            LayoutY(portLabel, ref y, 16);
+            LayoutY(portLabel, ref y, 15);
 
             portInput = UIFactory.CreateInputField(content, "PortInput", robotDataReader != null ? robotDataReader.Port.ToString() : "8888", 13, InputField.ContentType.IntegerNumber);
-            Layout(portInput, ref y, 26);
+            Layout(portInput, ref y, 30);
 
-            connectBtn = UIFactory.CreateButton(content, "ConnectBtn", "连接", 14);
-            Layout(connectBtn, ref y, 30);
+            connectBtn = UIFactory.CreateButton(content, "ConnectBtn", "连接设备", 14);
+            Layout(connectBtn, ref y, 34);
             connectBtn.onClick.AddListener(OnConnectClicked);
 
             pipeStatusText = UIFactory.CreateText(content, "PipeStatus", "连接：未连接", 12, UIFactory.AccentOrange, TextAnchor.MiddleLeft);
             LayoutY(pipeStatusText, ref y, 20);
 
-            y -= 14;
+            y -= 20;
 
-            // 检测数据（实时数值卡片 + 数据曲线）
-            Text secData = UIFactory.CreateText(content, "SecData", "▎ 检测数据", 16, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
-            LayoutY(secData, ref y, 26);
-
-            mainDeviationText = CreateDataCard(content, "偏差", "0.00", UIFactory.AccentCyan, 0, 0, y);
-            mainEllipticityText = CreateDataCard(content, "椭圆度", "0.00", UIFactory.AccentGreen, 1, 0, y);
-            mainConfidenceText = CreateDataCard(content, "置信度", "0.00", UIFactory.AccentOrange, 0, 1, y);
-            mainRadiusText = CreateDataCard(content, "半径", "0.00", UIFactory.AccentPurple, 1, 1, y);
-            y -= 132f;
-
-            Button chartBtn = UIFactory.CreateButton(content, "ChartBtn", "数据曲线", 14);
-            Layout(chartBtn, ref y, 36);
-            chartBtn.onClick.AddListener(ShowChartPanel);
-
-            y -= 14;
-
-            // 模式选择
-            Text sec2 = UIFactory.CreateText(content, "Sec2", "▎ 驾驶模式", 16, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
-            LayoutY(sec2, ref y, 26);
+            // ---- 驾驶模式 ----
+            AddSectionHeader(content, "驾驶模式", ref y);
 
             modeController = gameObject.AddComponent<ModeController>();
             modeController.Setup(car, cameraRotor);
-            // 给 modeController 一个容器
+            scriptRunner?.SetModeController(modeController);
             GameObject modeContainer = new GameObject("ModeContainer", typeof(RectTransform));
             modeContainer.transform.SetParent(content, false);
             RectTransform mc = modeContainer.GetComponent<RectTransform>();
@@ -870,33 +896,111 @@ namespace DigitalTwin
             modeController.Build(mc);
             y -= 252;
 
-            y -= 14;
+            y -= 20;
 
-            // 数字建模
-            Text sec3 = UIFactory.CreateText(content, "Sec3", "▎ 数字建模", 16, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
-            LayoutY(sec3, ref y, 26);
+            // ---- 数字建模 ----
+            AddSectionHeader(content, "数字建模", ref y);
 
             // 管道模型（动态半透明管道，点击切换显示）
             pipeModelBtn = UIFactory.CreateButton(content, "PipeModelBtn", "管道模型", 14);
-            RectTransform pmRT = pipeModelBtn.GetComponent<RectTransform>();
-            pmRT.anchorMin = new Vector2(0, 1);
-            pmRT.anchorMax = new Vector2(1, 1);
-            pmRT.pivot = new Vector2(0.5f, 1);
-            pmRT.anchoredPosition = new Vector2(0, y);
-            pmRT.sizeDelta = new Vector2(0, 36);
+            Layout(pipeModelBtn, ref y, 38);
             pipeModelBtn.onClick.AddListener(TogglePipeModel);
-            y -= 40;
 
             // 点云重建
             Button rebuildBtn = UIFactory.CreateButton(content, "RebuildBtn", "点云重建", 14);
-            RectTransform rbRT = rebuildBtn.GetComponent<RectTransform>();
-            rbRT.anchorMin = new Vector2(0, 1);
-            rbRT.anchorMax = new Vector2(1, 1);
-            rbRT.pivot = new Vector2(0.5f, 1);
-            rbRT.anchoredPosition = new Vector2(0, y);
-            rbRT.sizeDelta = new Vector2(0, 36);
+            Layout(rebuildBtn, ref y, 38);
             rebuildBtn.onClick.AddListener(OpenRebuildPanel);
-            y -= 40;
+
+            // 脚本编写
+            Button scriptBtn = UIFactory.CreateButton(content, "ScriptBtn", "脚本编写", 14);
+            Layout(scriptBtn, ref y, 38);
+            scriptBtn.onClick.AddListener(OpenScriptPanel);
+
+            // 运行输出（常驻显示脚本 print 的结果，不放在弹窗里）
+            Text outLabel = UIFactory.CreateText(content, "ScriptOutLabel", "运行输出", 12, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
+            LayoutY(outLabel, ref y, 18);
+
+            GameObject outBox = new GameObject("ScriptOutputBox", typeof(RectTransform), typeof(Image), typeof(ScrollRect));
+            outBox.transform.SetParent(content, false);
+            Image obImg = outBox.GetComponent<Image>();
+            obImg.color = new Color(0.0784f, 0.0941f, 0.1137f, 1f);
+            UIFactory.ApplyRounded(obImg);
+            Layout(outBox.GetComponent<RectTransform>(), ref y, 120);
+
+            scriptOutputScroll = outBox.GetComponent<ScrollRect>();
+            scriptOutputScroll.horizontal = false;
+            scriptOutputScroll.vertical = true;
+            scriptOutputScroll.scrollSensitivity = 24f;
+            scriptOutputScroll.movementType = ScrollRect.MovementType.Clamped;
+
+            GameObject outVpGO = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
+            outVpGO.transform.SetParent(outBox.transform, false);
+            RectTransform outVpRT = outVpGO.GetComponent<RectTransform>();
+            outVpRT.anchorMin = Vector2.zero;
+            outVpRT.anchorMax = Vector2.one;
+            outVpRT.offsetMin = Vector2.zero;
+            outVpRT.offsetMax = Vector2.zero;
+
+            scriptOutputText = UIFactory.CreateText(outVpGO.transform, "OutputText", "（未注入脚本）", 12,
+                new Color(0.78f, 0.85f, 0.95f, 1f), TextAnchor.UpperLeft);
+            RectTransform sotRT = scriptOutputText.GetComponent<RectTransform>();
+            sotRT.anchorMin = new Vector2(0f, 1f);
+            sotRT.anchorMax = new Vector2(1f, 1f);
+            sotRT.pivot = new Vector2(0.5f, 1f);
+            sotRT.anchoredPosition = Vector2.zero;
+            sotRT.sizeDelta = new Vector2(-16f, 0f);
+            ContentSizeFitter outCsf = scriptOutputText.gameObject.AddComponent<ContentSizeFitter>();
+            outCsf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            outCsf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            scriptOutputScroll.viewport = outVpRT;
+            scriptOutputScroll.content = sotRT;
+        }
+
+        /// <summary>侧栏分区标题：左侧强调条 + 标题 + 底部细分隔线。</summary>
+        private void AddSectionHeader(RectTransform parent, string title, ref float y)
+        {
+            GameObject go = new GameObject("Section_" + title, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0, 1);
+            rt.anchorMax = new Vector2(1, 1);
+            rt.pivot = new Vector2(0.5f, 1);
+            rt.anchoredPosition = new Vector2(0, y);
+            rt.sizeDelta = new Vector2(0, 30);
+
+            GameObject accentGO = new GameObject("Accent", typeof(RectTransform), typeof(Image));
+            accentGO.transform.SetParent(go.transform, false);
+            Image aImg = accentGO.GetComponent<Image>();
+            aImg.color = UIFactory.AccentCyan;
+            aImg.raycastTarget = false;
+            RectTransform aRT = accentGO.GetComponent<RectTransform>();
+            aRT.anchorMin = new Vector2(0, 0.5f);
+            aRT.anchorMax = new Vector2(0, 0.5f);
+            aRT.pivot = new Vector2(0, 0.5f);
+            aRT.anchoredPosition = Vector2.zero;
+            aRT.sizeDelta = new Vector2(3, 15);
+
+            Text t = UIFactory.CreateText(go.transform, "Title", title, 15, UIFactory.TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
+            RectTransform tRT = t.GetComponent<RectTransform>();
+            tRT.anchorMin = Vector2.zero;
+            tRT.anchorMax = Vector2.one;
+            tRT.offsetMin = new Vector2(11, 0);
+            tRT.offsetMax = Vector2.zero;
+
+            GameObject lineGO = new GameObject("Line", typeof(RectTransform), typeof(Image));
+            lineGO.transform.SetParent(go.transform, false);
+            Image lImg = lineGO.GetComponent<Image>();
+            lImg.color = UIFactory.BorderDim;
+            lImg.raycastTarget = false;
+            RectTransform lRT = lineGO.GetComponent<RectTransform>();
+            lRT.anchorMin = new Vector2(0, 0);
+            lRT.anchorMax = new Vector2(1, 0);
+            lRT.pivot = new Vector2(0.5f, 0);
+            lRT.anchoredPosition = Vector2.zero;
+            lRT.sizeDelta = new Vector2(0, 1);
+
+            y -= 48;
         }
 
         private void LayoutY(Text t, ref float y, float h)
@@ -907,7 +1011,7 @@ namespace DigitalTwin
             r.pivot = new Vector2(0.5f, 1);
             r.anchoredPosition = new Vector2(0, y);
             r.sizeDelta = new Vector2(0, h);
-            y -= h + 4;
+            y -= h + 8;
         }
 
         private void Layout(Component comp, ref float y, float h)
@@ -918,97 +1022,284 @@ namespace DigitalTwin
             r.pivot = new Vector2(0.5f, 1);
             r.anchoredPosition = new Vector2(0, y);
             r.sizeDelta = new Vector2(0, h);
-            y -= h + 4;
+            y -= h + 8;
         }
 
-        /// <summary>在左侧栏创建一个霓虹风格的数据卡片（顶部色条 + 标签 + 大号数值）。</summary>
-        private Text CreateDataCard(RectTransform parent, string label, string initValue, Color color, int col, int row, float topY)
+        // ===================== 中栏（读数 / 三维舞台 / 行驶状态） =====================
+        private void BuildCenterColumn()
         {
-            GameObject cardGO = new GameObject("Card_" + label, typeof(RectTransform), typeof(Image));
-            cardGO.transform.SetParent(parent, false);
+            // RectMask2D：数据面板收起时把滑出的部分裁掉，避免越界盖住顶/底栏
+            GameObject centerGO = new GameObject("CenterColumn", typeof(RectTransform), typeof(RectMask2D));
+            centerGO.transform.SetParent(canvas.transform, false);
+            RectTransform center = centerGO.GetComponent<RectTransform>();
+            center.anchorMin = Vector2.zero;
+            center.anchorMax = Vector2.one;
+            center.offsetMin = new Vector2(SideBarWidth + BarMargin * 2, FooterHeight + BarMargin);
+            center.offsetMax = new Vector2(-(SideBarWidth + BarMargin * 2), -(TopBarHeight + BarMargin));
 
-            Image bg = cardGO.GetComponent<Image>();
-            bg.color = new Color(0.03f, 0.07f, 0.12f, 0.95f);
-            bg.raycastTarget = false;
+            // 读数带（顶部数据面板，可收起，位于「三维孪生」标题栏下方）
+            RectTransform readout = UIFactory.CreatePanel(center, "ReadoutBand", UIFactory.BgPanel, UIFactory.BorderCyan);
+            readout.anchorMin = new Vector2(0, 1);
+            readout.anchorMax = new Vector2(1, 1);
+            readout.pivot = new Vector2(0.5f, 1);
+            readout.anchoredPosition = new Vector2(0, -StageToolbarHeight);
+            readout.sizeDelta = new Vector2(0, ReadoutBandHeight);
+            readoutBandRect = readout;
+            BuildReadoutBand(readout);
 
-            RectTransform rt = cardGO.GetComponent<RectTransform>();
-            const float h = 62f;
-            const float gap = 8f;
-            // 两列等分整行宽度，与上下其它控件（输入框/按钮）左右对齐
-            rt.anchorMin = new Vector2(col == 0 ? 0f : 0.5f, 1);
-            rt.anchorMax = new Vector2(col == 0 ? 0.5f : 1f, 1);
-            rt.pivot = new Vector2(col == 0 ? 0f : 1f, 1);
-            rt.anchoredPosition = new Vector2(0f, topY - row * (h + gap));
-            rt.sizeDelta = new Vector2(-gap * 0.5f, h);
+            // 行驶状态带（底部数据面板，可收起，位于坐标条上方）
+            RectTransform travel = UIFactory.CreatePanel(center, "TravelBand", UIFactory.BgPanel, UIFactory.BorderCyan);
+            travel.anchorMin = new Vector2(0, 0);
+            travel.anchorMax = new Vector2(1, 0);
+            travel.pivot = new Vector2(0.5f, 0);
+            travel.anchoredPosition = new Vector2(0, StageCoordsHeight);
+            travel.sizeDelta = new Vector2(0, TravelBandHeight);
+            travelBandRect = travel;
+            BuildTravelBand(travel);
 
-            // 顶部色条
-            GameObject barGO = new GameObject("Bar", typeof(RectTransform), typeof(Image));
-            barGO.transform.SetParent(cardGO.transform, false);
-            Image barImg = barGO.GetComponent<Image>();
-            barImg.color = color;
-            barImg.raycastTarget = false;
-            RectTransform barRT = barGO.GetComponent<RectTransform>();
-            barRT.anchorMin = new Vector2(0, 1);
-            barRT.anchorMax = new Vector2(1, 1);
-            barRT.pivot = new Vector2(0.5f, 1);
-            barRT.anchoredPosition = Vector2.zero;
-            barRT.sizeDelta = new Vector2(0, 3);
+            // 中间：三维舞台（透明，透出 3D 场景）
+            GameObject stageGO = new GameObject("Stage", typeof(RectTransform));
+            stageGO.transform.SetParent(center, false);
+            RectTransform stage = stageGO.GetComponent<RectTransform>();
+            stage.anchorMin = Vector2.zero;
+            stage.anchorMax = Vector2.one;
+            stage.offsetMin = new Vector2(0, StageCoordsHeight + TravelBandHeight + 24f);
+            stage.offsetMax = new Vector2(0, -(StageToolbarHeight + ReadoutBandHeight + 24f));
+            stageRect = stage;
 
-            // 标签
-            Text lab = UIFactory.CreateText(cardGO.transform, "Label", label, 11, UIFactory.TextDim, TextAnchor.MiddleLeft);
-            RectTransform lRT = lab.GetComponent<RectTransform>();
-            lRT.anchorMin = new Vector2(0, 1);
-            lRT.anchorMax = new Vector2(1, 1);
-            lRT.pivot = new Vector2(0.5f, 1);
-            lRT.anchoredPosition = new Vector2(0, -4);
-            lRT.sizeDelta = new Vector2(0, 16);
+            // 「三维孪生」标题栏（最顶）+ 坐标条（最底）——放在数据面板之后，收起时数据面板滑到其后面
+            BuildStageChrome(center);
 
-            // 数值
-            Text val = UIFactory.CreateText(cardGO.transform, "Value", initValue, 17, color, TextAnchor.MiddleCenter, FontStyle.Bold);
+            // 两个数据面板的收起 / 展开把手（放最上层）
+            topDataToggleRect = CreateDataBandToggle(center, "TopDataToggle", "▲", true);
+            bottomDataToggleRect = CreateDataBandToggle(center, "BottomDataToggle", "▼", false);
+        }
+
+        private void BuildReadoutBand(RectTransform band)
+        {
+            Text heading = UIFactory.CreateText(band, "Heading", "检测数据", 15, UIFactory.TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
+            RectTransform hRT = heading.GetComponent<RectTransform>();
+            hRT.anchorMin = new Vector2(0, 0);
+            hRT.anchorMax = new Vector2(0, 1);
+            hRT.pivot = new Vector2(0, 0.5f);
+            hRT.anchoredPosition = new Vector2(20, 8);
+            hRT.sizeDelta = new Vector2(120, -28);
+
+            Text sub = UIFactory.CreateText(band, "Sub", "实时检测指标", 11, UIFactory.TextDim, TextAnchor.MiddleLeft);
+            RectTransform subRT = sub.GetComponent<RectTransform>();
+            subRT.anchorMin = new Vector2(0, 0);
+            subRT.anchorMax = new Vector2(0, 1);
+            subRT.pivot = new Vector2(0, 0.5f);
+            subRT.anchoredPosition = new Vector2(20, -14);
+            subRT.sizeDelta = new Vector2(120, -28);
+
+            GameObject metricsGO = new GameObject("Metrics", typeof(RectTransform));
+            metricsGO.transform.SetParent(band, false);
+            RectTransform metrics = metricsGO.GetComponent<RectTransform>();
+            metrics.anchorMin = new Vector2(0, 0);
+            metrics.anchorMax = new Vector2(1, 1);
+            metrics.offsetMin = new Vector2(150, 14);
+            metrics.offsetMax = new Vector2(-160, -14);
+
+            mainDeviationText = CreateReadoutMetric(metrics, "偏差", "0.00", UIFactory.AccentCyan, 0, 4);
+            mainEllipticityText = CreateReadoutMetric(metrics, "椭圆度", "0.00", UIFactory.AccentGreen, 1, 4);
+            mainConfidenceText = CreateReadoutMetric(metrics, "置信度", "0.00", UIFactory.AccentOrange, 2, 4);
+            mainRadiusText = CreateReadoutMetric(metrics, "半径", "0.00", UIFactory.AccentPurple, 3, 4);
+
+            Button chartBtn = UIFactory.CreateButton(band, "ChartBtn", "数据曲线", 13);
+            RectTransform cbRT = chartBtn.GetComponent<RectTransform>();
+            cbRT.anchorMin = new Vector2(1, 0.5f);
+            cbRT.anchorMax = new Vector2(1, 0.5f);
+            cbRT.pivot = new Vector2(1, 0.5f);
+            cbRT.anchoredPosition = new Vector2(-18, 0);
+            cbRT.sizeDelta = new Vector2(120, 38);
+            chartBtn.onClick.AddListener(ShowChartPanel);
+        }
+
+        /// <summary>读数带里的单个指标（标签 + 大号数值），按列等分。</summary>
+        private Text CreateReadoutMetric(RectTransform parent, string label, string initValue, Color color, int col, int count)
+        {
+            GameObject go = new GameObject("Metric_" + label, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+            RectTransform rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(col / (float)count, 0);
+            rt.anchorMax = new Vector2((col + 1) / (float)count, 1);
+            rt.offsetMin = new Vector2(20, 0);
+            rt.offsetMax = new Vector2(0, 0);
+
+            if (col > 0)
+            {
+                GameObject lineGO = new GameObject("Sep", typeof(RectTransform), typeof(Image));
+                lineGO.transform.SetParent(go.transform, false);
+                Image lImg = lineGO.GetComponent<Image>();
+                lImg.color = UIFactory.BorderCyan;
+                lImg.raycastTarget = false;
+                RectTransform lRT = lineGO.GetComponent<RectTransform>();
+                lRT.anchorMin = new Vector2(0, 0.15f);
+                lRT.anchorMax = new Vector2(0, 0.85f);
+                lRT.pivot = new Vector2(0, 0.5f);
+                lRT.anchoredPosition = Vector2.zero;
+                lRT.sizeDelta = new Vector2(1, 0);
+            }
+
+            Text lab = UIFactory.CreateText(go.transform, "Label", label, 12, UIFactory.TextDim, TextAnchor.LowerLeft);
+            RectTransform labRT = lab.GetComponent<RectTransform>();
+            labRT.anchorMin = new Vector2(0, 0.5f);
+            labRT.anchorMax = new Vector2(1, 1);
+            labRT.offsetMin = Vector2.zero;
+            labRT.offsetMax = Vector2.zero;
+
+            Text val = UIFactory.CreateText(go.transform, "Value", initValue, 26, color, TextAnchor.UpperLeft);
             RectTransform vRT = val.GetComponent<RectTransform>();
-            vRT.anchorMin = Vector2.zero;
-            vRT.anchorMax = Vector2.one;
-            vRT.offsetMin = new Vector2(0, 4);
-            vRT.offsetMax = new Vector2(0, -18);
+            vRT.anchorMin = new Vector2(0, 0);
+            vRT.anchorMax = new Vector2(1, 0.55f);
+            vRT.offsetMin = Vector2.zero;
+            vRT.offsetMax = Vector2.zero;
 
             return val;
         }
 
-        // ===================== 右侧栏 =====================
+        /// <summary>中栏的「三维孪生」标题栏（最顶）与坐标条（最底）。</summary>
+        private void BuildStageChrome(RectTransform center)
+        {
+            // 「三维孪生」标题栏（最顶）
+            RectTransform toolbar = UIFactory.CreatePanel(center, "StageToolbar", new Color(0.1529f, 0.1725f, 0.1961f, 1f), UIFactory.BorderCyan);
+            toolbar.anchorMin = new Vector2(0, 1);
+            toolbar.anchorMax = new Vector2(1, 1);
+            toolbar.pivot = new Vector2(0.5f, 1);
+            toolbar.anchoredPosition = Vector2.zero;
+            toolbar.sizeDelta = new Vector2(0, StageToolbarHeight);
+
+            Text th = UIFactory.CreateText(toolbar, "Title", "三维孪生", 14, UIFactory.TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
+            RectTransform thRT = th.GetComponent<RectTransform>();
+            thRT.anchorMin = new Vector2(0, 0);
+            thRT.anchorMax = new Vector2(0.5f, 1);
+            thRT.pivot = new Vector2(0, 0.5f);
+            thRT.anchoredPosition = new Vector2(18, 0);
+            thRT.sizeDelta = new Vector2(300, 0);
+
+            stageModeText = UIFactory.CreateText(toolbar, "Mode", "手动模式", 12, UIFactory.TextDim, TextAnchor.MiddleRight);
+            RectTransform smRT = stageModeText.GetComponent<RectTransform>();
+            smRT.anchorMin = new Vector2(0.5f, 0);
+            smRT.anchorMax = new Vector2(1, 1);
+            smRT.pivot = new Vector2(1, 0.5f);
+            smRT.anchoredPosition = new Vector2(-18, 0);
+            smRT.sizeDelta = new Vector2(300, 0);
+
+            // 坐标条（最底）
+            RectTransform coords = UIFactory.CreatePanel(center, "Coordinates", new Color(0.1451f, 0.1608f, 0.1804f, 1f), UIFactory.BorderDim);
+            coords.anchorMin = new Vector2(0, 0);
+            coords.anchorMax = new Vector2(1, 0);
+            coords.pivot = new Vector2(0.5f, 0);
+            coords.anchoredPosition = Vector2.zero;
+            coords.sizeDelta = new Vector2(0, StageCoordsHeight);
+
+            positionText = UIFactory.CreateText(coords, "Position", "X 0.0    Y 0.0    Z 0.0", 12, UIFactory.TextDim, TextAnchor.MiddleLeft);
+            RectTransform pRT = positionText.GetComponent<RectTransform>();
+            pRT.anchorMin = Vector2.zero;
+            pRT.anchorMax = Vector2.one;
+            pRT.offsetMin = new Vector2(18, 0);
+            pRT.offsetMax = new Vector2(-18, 0);
+        }
+
+        private void BuildTravelBand(RectTransform band)
+        {
+            Text head = UIFactory.CreateText(band, "Head", "行驶状态", 14, UIFactory.TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
+            RectTransform hRT = head.GetComponent<RectTransform>();
+            hRT.anchorMin = new Vector2(0, 1);
+            hRT.anchorMax = new Vector2(0, 1);
+            hRT.pivot = new Vector2(0, 1);
+            hRT.anchoredPosition = new Vector2(20, -16);
+            hRT.sizeDelta = new Vector2(90, 24);
+
+            speedText = UIFactory.CreateText(band, "Speed", "速度 0.0 cm/s", 19, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
+            RectTransform sRT = speedText.GetComponent<RectTransform>();
+            sRT.anchorMin = new Vector2(0, 1);
+            sRT.anchorMax = new Vector2(0, 1);
+            sRT.pivot = new Vector2(0, 1);
+            sRT.anchoredPosition = new Vector2(120, -16);
+            sRT.sizeDelta = new Vector2(200, 24);
+
+            distanceText = UIFactory.CreateText(band, "Distance", "里程 0.0 cm", 19, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
+            RectTransform dRT = distanceText.GetComponent<RectTransform>();
+            dRT.anchorMin = new Vector2(0, 1);
+            dRT.anchorMax = new Vector2(0, 1);
+            dRT.pivot = new Vector2(0, 1);
+            dRT.anchoredPosition = new Vector2(340, -16);
+            dRT.sizeDelta = new Vector2(200, 24);
+
+            travelStateText = UIFactory.CreateText(band, "State", "静止", 13, UIFactory.TextDim, TextAnchor.MiddleRight);
+            RectTransform tRT = travelStateText.GetComponent<RectTransform>();
+            tRT.anchorMin = new Vector2(1, 1);
+            tRT.anchorMax = new Vector2(1, 1);
+            tRT.pivot = new Vector2(1, 1);
+            tRT.anchoredPosition = new Vector2(-20, -16);
+            tRT.sizeDelta = new Vector2(160, 24);
+
+            GameObject lineGO = new GameObject("Line", typeof(RectTransform), typeof(Image));
+            lineGO.transform.SetParent(band, false);
+            Image lImg = lineGO.GetComponent<Image>();
+            lImg.color = UIFactory.BorderDim;
+            lImg.raycastTarget = false;
+            RectTransform lRT = lineGO.GetComponent<RectTransform>();
+            lRT.anchorMin = new Vector2(0, 1);
+            lRT.anchorMax = new Vector2(1, 1);
+            lRT.pivot = new Vector2(0.5f, 1);
+            lRT.anchoredPosition = new Vector2(0, -46);
+            lRT.sizeDelta = new Vector2(-40, 1);
+
+            GameObject speedChartGO = new GameObject("SpeedChart", typeof(RectTransform), typeof(RawImage));
+            speedChartGO.transform.SetParent(band, false);
+            RectTransform scRT = speedChartGO.GetComponent<RectTransform>();
+            scRT.anchorMin = new Vector2(0, 0);
+            scRT.anchorMax = new Vector2(0.5f, 1);
+            scRT.offsetMin = new Vector2(20, 14);
+            scRT.offsetMax = new Vector2(-12, -54);
+            speedChart = gameObject.AddComponent<DataChart>();
+            speedChart.Build(scRT, UIFactory.AccentCyan, car != null ? Mathf.Max(1f, car.MaxSpeed) : 10f);
+
+            GameObject distChartGO = new GameObject("DistChart", typeof(RectTransform), typeof(RawImage));
+            distChartGO.transform.SetParent(band, false);
+            RectTransform dcRT = distChartGO.GetComponent<RectTransform>();
+            dcRT.anchorMin = new Vector2(0.5f, 0);
+            dcRT.anchorMax = new Vector2(1, 1);
+            dcRT.offsetMin = new Vector2(12, 14);
+            dcRT.offsetMax = new Vector2(-20, -54);
+            distanceChart = gameObject.AddComponent<DataChart>();
+            distanceChart.Build(dcRT, UIFactory.AccentGreen, -1f);
+        }
+
+        // ===================== 右侧栏（摄像头识别 + 雷达扫描） =====================
         private void BuildRightColumn()
         {
-            RectTransform column = CreateDecoratedPanel(canvas.transform, "RightColumn", UIFactory.BgPanel, UIFactory.BorderCyan, true);
+            RectTransform column = UIFactory.CreatePanel(canvas.transform, "RightColumn", UIFactory.BgPanel, UIFactory.BorderCyan);
             column.anchorMin = new Vector2(1, 0);
             column.anchorMax = new Vector2(1, 1);
             column.pivot = new Vector2(1, 0.5f);
-            column.anchoredPosition = new Vector2(-BarMargin, -33);
-            column.sizeDelta = new Vector2(SideBarWidth, -94);
+            column.anchoredPosition = new Vector2(-BarMargin, (FooterHeight - TopBarHeight) * 0.5f);
+            column.sizeDelta = new Vector2(SideBarWidth, -(TopBarHeight + FooterHeight + BarMargin * 2));
 
             rightSidebarRect = column;
             sidebarsInited = false;
 
-            // 内容容器
             GameObject contentGO = new GameObject("Content", typeof(RectTransform));
             contentGO.transform.SetParent(column, false);
             RectTransform content = contentGO.GetComponent<RectTransform>();
             content.anchorMin = Vector2.zero;
             content.anchorMax = Vector2.one;
-            content.offsetMin = new Vector2(8, 8);
-            content.offsetMax = new Vector2(-8, -8);
+            content.offsetMin = new Vector2(14, 14);
+            content.offsetMax = new Vector2(-14, -14);
 
-            // 三个面板按垂直比例排布：雷达占最大，行驶状态与摄像头次之
-            RectTransform telePanel = CreateSubPanel(content, "TelemetryPanel", "▎ 行驶状态 · 速度 / 距离",
-                new Vector2(0, 0.70f), new Vector2(1, 1f), new Vector2(0, 0), new Vector2(0, -4));
-            BuildTelemetryPanel(telePanel);
+            // 摄像头识别（上）
+            RectTransform camPanel = CreateSubPanel(content, "CameraPanel", "摄像头识别",
+                new Vector2(0, 0.55f), new Vector2(1, 1f), Vector2.zero, Vector2.zero);
+            BuildCameraPanel(camPanel);
 
-            RectTransform radarPanel = CreateSubPanel(content, "RadarPanel", "▎ 雷达扫描 · 点云",
-                new Vector2(0, 0.315f), new Vector2(1, 0.69f), new Vector2(0, 4), new Vector2(0, -4));
+            // 雷达扫描（下）
+            RectTransform radarPanel = CreateSubPanel(content, "RadarPanel", "雷达扫描 · 点云",
+                new Vector2(0, 0f), new Vector2(1, 0.53f), Vector2.zero, Vector2.zero);
             radar = gameObject.AddComponent<RadarScanner>();
             radar.Build(radarPanel, canvas);
-
-            RectTransform camPanel = CreateSubPanel(content, "CameraPanel", "▎ 摄像头识别",
-                new Vector2(0, 0f), new Vector2(1, 0.305f), new Vector2(0, 4), new Vector2(0, 0));
-            BuildCameraPanel(camPanel);
         }
 
         private RectTransform CreateSubPanel(RectTransform parent, string name, string title,
@@ -1028,80 +1319,49 @@ namespace DigitalTwin
             RectTransform body = bodyGO.GetComponent<RectTransform>();
             body.anchorMin = new Vector2(0, 0);
             body.anchorMax = new Vector2(1, 1);
-            body.offsetMin = new Vector2(6, 6);
-            body.offsetMax = new Vector2(-6, -34);
+            body.offsetMin = new Vector2(12, 12);
+            body.offsetMax = new Vector2(-12, -48);
 
             return body;
         }
 
-        private void BuildTelemetryPanel(RectTransform body)
-        {
-            // 上半：速度数值 + 图表
-            speedText = UIFactory.CreateText(body, "Speed", "速度 0.0 cm/s", 20, UIFactory.AccentCyan, TextAnchor.MiddleLeft, FontStyle.Bold);
-            RectTransform sRT = speedText.GetComponent<RectTransform>();
-            sRT.anchorMin = new Vector2(0, 0.75f);
-            sRT.anchorMax = new Vector2(0.5f, 1);
-            sRT.offsetMin = new Vector2(8, 0);
-            sRT.offsetMax = Vector2.zero;
-
-            distanceText = UIFactory.CreateText(body, "Distance", "里程 0.0 cm", 16, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
-            RectTransform dRT = distanceText.GetComponent<RectTransform>();
-            dRT.anchorMin = new Vector2(0.5f, 0.75f);
-            dRT.anchorMax = new Vector2(1, 1);
-            dRT.offsetMin = new Vector2(8, 0);
-            dRT.offsetMax = new Vector2(-8, 0);
-
-            positionText = UIFactory.CreateText(body, "Position", "X 0.0  Y 0.0  Z 0.0", 12, UIFactory.TextDim, TextAnchor.MiddleLeft);
-            RectTransform pRT = positionText.GetComponent<RectTransform>();
-            pRT.anchorMin = new Vector2(0, 0.6f);
-            pRT.anchorMax = new Vector2(1, 0.75f);
-            pRT.offsetMin = new Vector2(8, 0);
-            pRT.offsetMax = new Vector2(-8, 0);
-
-            // 速度图表
-            GameObject speedChartGO = new GameObject("SpeedChart", typeof(RectTransform), typeof(RawImage));
-            speedChartGO.transform.SetParent(body, false);
-            RectTransform scRT = speedChartGO.GetComponent<RectTransform>();
-            scRT.anchorMin = new Vector2(0, 0);
-            scRT.anchorMax = new Vector2(0.5f, 0.58f);
-            scRT.offsetMin = new Vector2(4, 4);
-            scRT.offsetMax = new Vector2(-2, -2);
-            speedChart = gameObject.AddComponent<DataChart>();
-            speedChart.Build(scRT, UIFactory.AccentCyan, car != null ? Mathf.Max(1f, car.MaxSpeed) : 10f);
-
-            // 距离图表
-            GameObject distChartGO = new GameObject("DistChart", typeof(RectTransform), typeof(RawImage));
-            distChartGO.transform.SetParent(body, false);
-            RectTransform dcRT = distChartGO.GetComponent<RectTransform>();
-            dcRT.anchorMin = new Vector2(0.5f, 0);
-            dcRT.anchorMax = new Vector2(1, 0.58f);
-            dcRT.offsetMin = new Vector2(2, 4);
-            dcRT.offsetMax = new Vector2(-4, -2);
-            distanceChart = gameObject.AddComponent<DataChart>();
-            distanceChart.Build(dcRT, UIFactory.AccentGreen, -1f);
-        }
-
         private void BuildCameraPanel(RectTransform body)
         {
+            // 顶部元信息行：检测画面 / 云台角度
+            Text feedLabel = UIFactory.CreateText(body, "FeedLabel", "检测画面", 11, UIFactory.TextDim, TextAnchor.MiddleLeft);
+            RectTransform flRT = feedLabel.GetComponent<RectTransform>();
+            flRT.anchorMin = new Vector2(0, 1);
+            flRT.anchorMax = new Vector2(0.5f, 1);
+            flRT.pivot = new Vector2(0, 1);
+            flRT.anchoredPosition = Vector2.zero;
+            flRT.sizeDelta = new Vector2(0, 18);
+
+            cameraAngleText = UIFactory.CreateText(body, "GimbalAngle", "云台 0°", 11, UIFactory.TextDim, TextAnchor.MiddleRight);
+            RectTransform aRT = cameraAngleText.GetComponent<RectTransform>();
+            aRT.anchorMin = new Vector2(0.5f, 1);
+            aRT.anchorMax = new Vector2(1, 1);
+            aRT.pivot = new Vector2(1, 1);
+            aRT.anchoredPosition = Vector2.zero;
+            aRT.sizeDelta = new Vector2(0, 18);
+
             // 摄像头画面
             GameObject camGO = new GameObject("CameraFeed", typeof(RectTransform), typeof(RawImage));
             camGO.transform.SetParent(body, false);
             cameraImage = camGO.GetComponent<RawImage>();
-            cameraImage.color = new Color(0.1f, 0.1f, 0.1f, 1);
+            cameraImage.color = new Color(0.078f, 0.090f, 0.106f, 1f);
             cameraImage.raycastTarget = false;
 
             RectTransform camRT = camGO.GetComponent<RectTransform>();
-            camRT.anchorMin = new Vector2(0, 0.25f);
+            camRT.anchorMin = new Vector2(0, 0.26f);
             camRT.anchorMax = new Vector2(1, 1);
-            camRT.offsetMin = new Vector2(4, 4);
-            camRT.offsetMax = new Vector2(-4, -2);
+            camRT.offsetMin = new Vector2(0, 4);
+            camRT.offsetMax = new Vector2(0, -22);
 
-            // AspectRatioFitter 保持比例
             AspectRatioFitter fitter = camGO.AddComponent<AspectRatioFitter>();
             fitter.aspectMode = AspectRatioFitter.AspectMode.FitInParent;
             fitter.aspectRatio = 16f / 9f;
 
-            // 检测框覆盖层（叠加在画面上方，用于绘制识别框与标签）
+            // 检测框覆盖层
             GameObject overlayGO = new GameObject("DetectionOverlay", typeof(RectTransform));
             overlayGO.transform.SetParent(camGO.transform, false);
             cameraOverlay = overlayGO;
@@ -1112,24 +1372,39 @@ namespace DigitalTwin
             ovRT.offsetMax = Vector2.zero;
 
             // 识别结果
-            recognitionText = UIFactory.CreateText(body, "Recognition", "识别结果：等待画面...", 13, UIFactory.AccentCyan,
-                TextAnchor.UpperLeft, FontStyle.Normal);
+            recognitionText = UIFactory.CreateText(body, "Recognition", "识别结果：等待画面…", 12, UIFactory.TextPrimary, TextAnchor.UpperLeft);
             RectTransform rRT = recognitionText.GetComponent<RectTransform>();
             rRT.anchorMin = new Vector2(0, 0);
-            rRT.anchorMax = new Vector2(1, 0.25f);
-            rRT.offsetMin = new Vector2(8, 4);
-            rRT.offsetMax = new Vector2(-8, -4);
+            rRT.anchorMax = new Vector2(1, 0.24f);
+            rRT.offsetMin = new Vector2(0, 4);
+            rRT.offsetMax = new Vector2(0, -2);
             recognitionText.horizontalOverflow = HorizontalWrapMode.Wrap;
             recognitionText.verticalOverflow = VerticalWrapMode.Truncate;
+        }
 
-            // 云台角度（叠加在画面上方）
-            cameraAngleText = UIFactory.CreateText(body, "GimbalAngle", "云台 0°", 14, UIFactory.AccentGreen,
-                TextAnchor.UpperRight, FontStyle.Bold);
-            RectTransform aRT = cameraAngleText.GetComponent<RectTransform>();
-            aRT.anchorMin = new Vector2(0, 0.86f);
-            aRT.anchorMax = new Vector2(1, 1);
-            aRT.offsetMin = new Vector2(8, 0);
-            aRT.offsetMax = new Vector2(-8, 0);
+        // ===================== 底部状态栏 =====================
+        private void BuildFooter()
+        {
+            RectTransform footer = UIFactory.CreatePanel(canvas.transform, "Footer", UIFactory.BgDark, UIFactory.BorderCyan, false);
+            footer.anchorMin = new Vector2(0, 0);
+            footer.anchorMax = new Vector2(1, 0);
+            footer.pivot = new Vector2(0.5f, 0);
+            footer.anchoredPosition = Vector2.zero;
+            footer.sizeDelta = new Vector2(0, FooterHeight);
+
+            footerText = UIFactory.CreateText(footer, "Source", "● 本地模式 · 未接入设备", 11, UIFactory.TextDim, TextAnchor.MiddleLeft);
+            RectTransform sRT = footerText.GetComponent<RectTransform>();
+            sRT.anchorMin = Vector2.zero;
+            sRT.anchorMax = Vector2.one;
+            sRT.offsetMin = new Vector2(16, 0);
+            sRT.offsetMax = new Vector2(-260, 0);
+
+            Text tag = UIFactory.CreateText(footer, "Tag", "管道检测 / 数字孪生", 11, UIFactory.TextDim, TextAnchor.MiddleRight);
+            RectTransform tRT = tag.GetComponent<RectTransform>();
+            tRT.anchorMin = Vector2.zero;
+            tRT.anchorMax = Vector2.one;
+            tRT.offsetMin = new Vector2(200, 0);
+            tRT.offsetMax = new Vector2(-16, 0);
         }
 
         // ===================== 侧栏展开 / 收起 =====================
@@ -1236,6 +1511,96 @@ namespace DigitalTwin
             if (rightToggleLabel != null)
             {
                 rightToggleLabel.text = rightCollapsed ? "◀" : "▶";
+            }
+        }
+
+        // ===================== 数据面板展开 / 收起 =====================
+        private RectTransform CreateDataBandToggle(RectTransform parent, string name, string label, bool top)
+        {
+            Button btn = UIFactory.CreateButton(parent, name, label, 13);
+            RectTransform rt = btn.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0.5f, top ? 1f : 0f);
+            rt.anchorMax = rt.anchorMin;
+            rt.pivot = new Vector2(0.5f, top ? 1f : 0f);
+            rt.sizeDelta = new Vector2(78f, 22f);
+            rt.anchoredPosition = top
+                ? new Vector2(0f, -(StageToolbarHeight + ReadoutBandHeight))
+                : new Vector2(0f, StageCoordsHeight + TravelBandHeight);
+
+            Image img = btn.GetComponent<Image>();
+            img.color = new Color(0.1647f, 0.1882f, 0.2157f, 0.96f);
+
+            ColorBlock cb = btn.colors;
+            cb.normalColor = Color.white;
+            cb.highlightedColor = new Color(0.65f, 0.80f, 1f, 1f);
+            cb.pressedColor = new Color(0.43f, 0.66f, 0.95f, 1f);
+            cb.selectedColor = Color.white;
+            btn.colors = cb;
+
+            Text t = btn.GetComponentInChildren<Text>();
+            if (t != null)
+            {
+                t.color = UIFactory.AccentCyan;
+                t.fontStyle = FontStyle.Bold;
+            }
+
+            if (top) topDataToggleLabel = t; else bottomDataToggleLabel = t;
+            btn.onClick.AddListener(() => ToggleDataBand(top));
+            return rt;
+        }
+
+        private void ToggleDataBand(bool top)
+        {
+            if (top) readoutCollapsed = !readoutCollapsed;
+            else travelCollapsed = !travelCollapsed;
+        }
+
+        /// <summary>驱动「检测数据」「行驶状态」两个数据面板纵向滑出滑入，并让三维舞台随之伸缩。</summary>
+        private void UpdateDataBands()
+        {
+            if (readoutBandRect == null || travelBandRect == null || stageRect == null)
+            {
+                return;
+            }
+
+            float targetR = readoutCollapsed ? 1f : 0f;
+            float targetT = travelCollapsed ? 1f : 0f;
+            readoutT = Mathf.MoveTowards(readoutT, targetR, Time.deltaTime * 6f);
+            travelT = Mathf.MoveTowards(travelT, targetT, Time.deltaTime * 6f);
+
+            // 检测数据面板：向上滑到「三维孪生」标题栏后面
+            Vector2 rp = readoutBandRect.anchoredPosition;
+            rp.y = -StageToolbarHeight + readoutT * (ReadoutBandHeight + StageToolbarHeight);
+            readoutBandRect.anchoredPosition = rp;
+
+            // 行驶状态面板：向下滑到坐标条后面
+            Vector2 tp = travelBandRect.anchoredPosition;
+            tp.y = StageCoordsHeight - travelT * (TravelBandHeight + StageCoordsHeight);
+            travelBandRect.anchoredPosition = tp;
+
+            // 三维舞台随两个面板的收起 / 展开而伸缩（始终为把手预留高度）
+            float topGap = Mathf.Lerp(StageToolbarHeight + ReadoutBandHeight + 24f, StageToolbarHeight + 24f, readoutT);
+            float bottomGap = Mathf.Lerp(StageCoordsHeight + TravelBandHeight + 24f, StageCoordsHeight + 24f, travelT);
+            stageRect.offsetMax = new Vector2(0f, -topGap);
+            stageRect.offsetMin = new Vector2(0f, bottomGap);
+
+            // 把手贴在数据面板的内边缘
+            if (topDataToggleRect != null)
+            {
+                topDataToggleRect.anchoredPosition = new Vector2(0f, -StageToolbarHeight - (1f - readoutT) * ReadoutBandHeight);
+            }
+            if (bottomDataToggleRect != null)
+            {
+                bottomDataToggleRect.anchoredPosition = new Vector2(0f, StageCoordsHeight + (1f - travelT) * TravelBandHeight);
+            }
+
+            if (topDataToggleLabel != null)
+            {
+                topDataToggleLabel.text = readoutCollapsed ? "▼" : "▲";
+            }
+            if (bottomDataToggleLabel != null)
+            {
+                bottomDataToggleLabel.text = travelCollapsed ? "▲" : "▼";
             }
         }
 
@@ -1560,10 +1925,14 @@ namespace DigitalTwin
         // ===================== 刷新 =====================
         private void UpdateClock()
         {
+            DateTime now = DateTime.Now;
             if (timeText != null)
             {
-                DateTime now = DateTime.Now;
-                timeText.text = $"{now:HH:mm:ss}  {now:yyyy-MM-dd}  {GetWeekday(now.DayOfWeek)}";
+                timeText.text = $"{now:HH:mm:ss}";
+            }
+            if (dateText != null)
+            {
+                dateText.text = $"{now:yyyy-MM-dd}  {GetWeekday(now.DayOfWeek)}";
             }
         }
 
@@ -1581,12 +1950,19 @@ namespace DigitalTwin
                 if (distanceText != null) distanceText.text = $"里程 {car.TotalDistance:0.0} cm";
                 if (speedChart != null) speedChart.AddValue(car.Speed);
                 if (distanceChart != null) distanceChart.AddValue(car.TotalDistance);
+
+                if (travelStateText != null)
+                {
+                    bool moving = car.Speed > 0.05f;
+                    travelStateText.text = moving ? "行驶中" : "静止";
+                    travelStateText.color = moving ? UIFactory.AccentGreen : UIFactory.TextDim;
+                }
             }
 
             if (carTransform != null && positionText != null)
             {
                 Vector3 p = carTransform.position;
-                positionText.text = $"X {p.x:0.0}  Y {p.y:0.0}  Z {p.z:0.0}  朝向 {carTransform.eulerAngles.y:0.0}°";
+                positionText.text = $"X {p.x:0.0}    Y {p.y:0.0}    Z {p.z:0.0}    朝向 {carTransform.eulerAngles.y:0.0}°";
             }
 
             if (cameraAngleText != null && cameraRotor != null)
@@ -1595,14 +1971,34 @@ namespace DigitalTwin
                     ? $"云台 {cameraRotor.CurrentAngle:0}°（自动环扫）"
                     : $"云台 {cameraRotor.CurrentAngle:0}°";
             }
+
+            if (stageModeText != null && modeController != null)
+            {
+                stageModeText.text = modeController.IsAutoCruise ? "自动巡航" : "手动模式";
+            }
         }
 
         private void UpdateStatus()
         {
-            if (statusText == null) return;
-            bool connected = client != null && client.IsConnected;
-            statusText.text = connected ? "● 后端已连接" : "● 本地模式";
-            statusText.color = connected ? UIFactory.AccentGreen : UIFactory.AccentOrange;
+            bool connected = (robotDataReader != null && robotDataReader.IsConnected) ||
+                             (client != null && client.IsConnected);
+
+            if (statusText != null)
+            {
+                statusText.text = connected ? "已连接" : "未连接";
+                statusText.color = connected ? UIFactory.AccentGreen : UIFactory.AccentOrange;
+            }
+            if (statusChipImg != null)
+            {
+                statusChipImg.color = connected
+                    ? new Color(0.149f, 0.204f, 0.169f, 1f)
+                    : new Color(0.188f, 0.165f, 0.137f, 1f);
+            }
+            if (footerText != null)
+            {
+                footerText.text = connected ? "● 设备已连接 · 数据接收中" : "● 本地模式 · 未接入设备";
+                footerText.color = connected ? UIFactory.AccentGreen : UIFactory.TextDim;
+            }
         }
 
         /// <summary>刷新小车 WebSocket 下发的管道数据、检测结果与连接状态。</summary>
@@ -1736,8 +2132,9 @@ namespace DigitalTwin
             barGO.transform.SetParent(panel, false);
 
             Image barImg = barGO.GetComponent<Image>();
-            barImg.color = new Color(0.02f, 0.08f, 0.14f, 0.98f);
+            barImg.color = new Color(0.1098f, 0.1216f, 0.1451f, 1f); // #1c1f25
             barImg.raycastTarget = false;
+            UIFactory.ApplyRounded(barImg);
 
             RectTransform barRT = barGO.GetComponent<RectTransform>();
             barRT.anchorMin = new Vector2(0f, 1f);
@@ -1750,10 +2147,10 @@ namespace DigitalTwin
 
             // 标题栏顶部高光
             AddChromeLine(barGO.transform, "TopHL", new Vector2(0f, 1f), new Vector2(1f, 1f), 1.5f,
-                new Color(0f, 0.86f, 1f, 0.55f));
+                new Color(0.4314f, 0.6627f, 0.9529f, 0.32f), 8f);
             // 标题栏与内容区的分隔线
             AddChromeLine(barGO.transform, "BottomLine", new Vector2(0f, 0f), new Vector2(1f, 0f), 1.5f,
-                new Color(0f, 0.86f, 1f, 0.35f));
+                UIFactory.BorderCyan);
 
             Text t = UIFactory.CreateText(barGO.transform, "Title", title, 16, UIFactory.TextPrimary,
                 TextAnchor.MiddleLeft, FontStyle.Bold);
@@ -1773,13 +2170,13 @@ namespace DigitalTwin
             cRT.sizeDelta = new Vector2(26f, 22f);
 
             Image cImg = close.GetComponent<Image>();
-            cImg.color = new Color(0.06f, 0.13f, 0.19f, 0.9f);
+            cImg.color = Color.white;
 
             ColorBlock cb = close.colors;
-            cb.normalColor = Color.white;
-            cb.highlightedColor = new Color(1.1f, 0.5f, 0.45f, 1f);
-            cb.pressedColor = new Color(1f, 0.28f, 0.24f, 1f);
-            cb.selectedColor = Color.white;
+            cb.normalColor = new Color(0.1647f, 0.1882f, 0.2157f, 1f);
+            cb.highlightedColor = new Color(0.55f, 0.22f, 0.22f, 1f);
+            cb.pressedColor = new Color(0.70f, 0.25f, 0.25f, 1f);
+            cb.selectedColor = new Color(0.1647f, 0.1882f, 0.2157f, 1f);
             close.colors = cb;
 
             Text cl = close.GetComponentInChildren<Text>();
@@ -1799,7 +2196,7 @@ namespace DigitalTwin
 
         /// <summary>标题栏上的横向细线（高光 / 分隔线）。</summary>
         private static void AddChromeLine(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax,
-            float thickness, Color color)
+            float thickness, Color color, float insetX = 0f)
         {
             GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
             go.transform.SetParent(parent, false);
@@ -1813,7 +2210,7 @@ namespace DigitalTwin
             rt.anchorMax = anchorMax;
             rt.pivot = new Vector2(0.5f, 0.5f);
             rt.anchoredPosition = new Vector2(0f, (anchorMin.y + anchorMax.y) * 0.5f < 0.5f ? thickness * 0.5f : -thickness * 0.5f);
-            rt.sizeDelta = new Vector2(0f, thickness);
+            rt.sizeDelta = new Vector2(-2f * insetX, thickness);
         }
 
         // ===================== 检测数据曲线 =====================
@@ -1998,7 +2395,7 @@ namespace DigitalTwin
             rebuildStatusText = UIFactory.CreateText(panel, "Status", "等待雷达数据…将自动重建", 13, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
             RectTransform sRT = rebuildStatusText.GetComponent<RectTransform>();
             sRT.anchorMin = new Vector2(0, 0);
-            sRT.anchorMax = new Vector2(0.36f, 0.14f);
+            sRT.anchorMax = new Vector2(0.28f, 0.14f);
             sRT.offsetMin = new Vector2(20, 8);
             sRT.offsetMax = new Vector2(-8, -4);
             rebuildStatusText.horizontalOverflow = HorizontalWrapMode.Wrap;
@@ -2007,8 +2404,8 @@ namespace DigitalTwin
             // 保存到本地
             Button saveBtn = UIFactory.CreateButton(panel, "SaveBtn", "保存建模", 14);
             RectTransform svRT = saveBtn.GetComponent<RectTransform>();
-            svRT.anchorMin = new Vector2(0.38f, 0);
-            svRT.anchorMax = new Vector2(0.68f, 0.14f);
+            svRT.anchorMin = new Vector2(0.30f, 0);
+            svRT.anchorMax = new Vector2(0.52f, 0.14f);
             svRT.offsetMin = new Vector2(4, 8);
             svRT.offsetMax = new Vector2(-4, -4);
             saveBtn.onClick.AddListener(OnSaveArchiveClicked);
@@ -2016,11 +2413,21 @@ namespace DigitalTwin
             // 读取本地存档
             Button loadBtn = UIFactory.CreateButton(panel, "LoadBtn", "读取建模", 14);
             RectTransform ldRT = loadBtn.GetComponent<RectTransform>();
-            ldRT.anchorMin = new Vector2(0.70f, 0);
-            ldRT.anchorMax = new Vector2(1f, 0.14f);
+            ldRT.anchorMin = new Vector2(0.54f, 0);
+            ldRT.anchorMax = new Vector2(0.76f, 0.14f);
             ldRT.offsetMin = new Vector2(4, 8);
-            ldRT.offsetMax = new Vector2(-20, -4);
+            ldRT.offsetMax = new Vector2(-4, -4);
             loadBtn.onClick.AddListener(OpenArchivePanel);
+
+            // 回到实时建模（查看本地存档后，清空并恢复实时采集）
+            backToLiveBtn = UIFactory.CreateButton(panel, "BackToLiveBtn", "回到实时建模", 14);
+            RectTransform btRT = backToLiveBtn.GetComponent<RectTransform>();
+            btRT.anchorMin = new Vector2(0.78f, 0);
+            btRT.anchorMax = new Vector2(1f, 0.14f);
+            btRT.offsetMin = new Vector2(4, 8);
+            btRT.offsetMax = new Vector2(-20, -4);
+            backToLiveBtn.onClick.AddListener(OnBackToLiveClicked);
+            backToLiveBtn.interactable = false;
 
             // 顶部临时提示（保存/读取结果，自动消失）
             noticeText = UIFactory.CreateText(panel, "Notice", "", 14, UIFactory.AccentGreen, TextAnchor.MiddleCenter, FontStyle.Bold);
@@ -2168,7 +2575,10 @@ namespace DigitalTwin
             previewCamera.transform.LookAt(previewTarget, Vector3.up);
         }
 
-        /// <summary>弹窗打开时：鼠标左键拖拽旋转、滚轮缩放预览相机。</summary>
+        /// <summary>
+        /// 弹窗打开时更新预览相机：
+        /// 左键拖拽旋转视角、右键拖拽平移位置、滚轮缩放、WASD 前后左右移动、Q/E 水平旋转。
+        /// </summary>
         private void UpdatePreviewCamera()
         {
             if (previewCamera == null || !previewInited)
@@ -2179,36 +2589,87 @@ namespace DigitalTwin
             {
                 return;
             }
-            // 有其它窗口盖在上面时，不响应预览旋转
+            // 有其它窗口盖在上面时，不响应预览操作
             if ((archivePanel != null && archivePanel.activeSelf) ||
                 (imagePanel != null && imagePanel.activeSelf))
             {
                 return;
             }
-            if (!IsMouseOverPreview())
-            {
-                return;
-            }
 
             bool changed = false;
+            Transform cam = previewCamera.transform;
 
-            // 左键拖拽旋转
-            if (Input.GetMouseButton(0))
+            // ---- 鼠标操作（需悬停在预览画面上）----
+            if (IsMouseOverPreview())
             {
-                previewYaw += Input.GetAxis("Mouse X") * 1.5f;
-                previewPitch -= Input.GetAxis("Mouse Y") * 1.5f;
-                previewPitch = Mathf.Clamp(previewPitch, -89f, 89f);
+                // 左键拖拽：旋转摄像机角度
+                if (Input.GetMouseButton(0))
+                {
+                    previewYaw += Input.GetAxis("Mouse X") * 1.5f;
+                    previewPitch -= Input.GetAxis("Mouse Y") * 1.5f;
+                    previewPitch = Mathf.Clamp(previewPitch, -89f, 89f);
+                    changed = true;
+                }
+
+                // 右键拖拽：平移摄像机位置（沿摄像机自身的右向/上向）
+                if (Input.GetMouseButton(1))
+                {
+                    float panScale = previewDistance * 0.0018f;
+                    previewTarget -= (cam.right * Input.GetAxis("Mouse X") +
+                                      cam.up * Input.GetAxis("Mouse Y")) * panScale;
+                    changed = true;
+                }
+
+                // 滚轮缩放
+                float scroll = Input.mouseScrollDelta.y;
+                if (Mathf.Abs(scroll) > 0.001f)
+                {
+                    previewDistance = Mathf.Clamp(
+                        previewDistance * Mathf.Pow(0.85f, scroll),
+                        previewRadius * 0.1f,
+                        previewRadius * 50f);
+                    changed = true;
+                }
+            }
+
+            // ---- 键盘操作 ----
+            // WASD：沿摄像机水平朝向前后 / 左右移动
+            Vector3 forward = cam.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 1e-6f)
+            {
+                forward = Vector3.forward;
+            }
+            forward.Normalize();
+
+            Vector3 right = cam.right;
+            right.y = 0f;
+            if (right.sqrMagnitude < 1e-6f)
+            {
+                right = Vector3.right;
+            }
+            right.Normalize();
+
+            Vector3 move = Vector3.zero;
+            if (Input.GetKey(KeyCode.W)) move += forward;
+            if (Input.GetKey(KeyCode.S)) move -= forward;
+            if (Input.GetKey(KeyCode.D)) move += right;
+            if (Input.GetKey(KeyCode.A)) move -= right;
+            if (move.sqrMagnitude > 0f)
+            {
+                previewTarget += move.normalized * (previewDistance * 0.6f) * Time.unscaledDeltaTime;
                 changed = true;
             }
 
-            // 滚轮缩放
-            float scroll = Input.mouseScrollDelta.y;
-            if (Mathf.Abs(scroll) > 0.001f)
+            // Q / E：绕目标水平旋转摄像机
+            if (Input.GetKey(KeyCode.Q))
             {
-                previewDistance = Mathf.Clamp(
-                    previewDistance * Mathf.Pow(0.85f, scroll),
-                    previewRadius * 0.1f,
-                    previewRadius * 50f);
+                previewYaw -= 70f * Time.unscaledDeltaTime;
+                changed = true;
+            }
+            if (Input.GetKey(KeyCode.E))
+            {
+                previewYaw += 70f * Time.unscaledDeltaTime;
                 changed = true;
             }
 
@@ -2322,6 +2783,23 @@ namespace DigitalTwin
             ShowNotice($"已保存到本地：{Path.GetFileName(dir)}（截面 {sections.Length} · 缺陷 {saveDefects.Count}）");
         }
 
+        /// <summary>点击「回到实时建模」：清空当前（存档）模型与缺陷，恢复实时雷达采集。</summary>
+        private void OnBackToLiveClicked()
+        {
+            if (pointCloudRebuilder == null)
+            {
+                return;
+            }
+
+            pointCloudRebuilder.ResumeLive();
+            ClearDefects();
+            if (backToLiveBtn != null)
+            {
+                backToLiveBtn.interactable = false;
+            }
+            ShowNotice("已回到实时建模，正在重新采集截面…");
+        }
+
         private void BuildArchivePanel()
         {
             GameObject overlayGO = new GameObject("ArchiveOverlay", typeof(RectTransform), typeof(Image));
@@ -2425,7 +2903,9 @@ namespace DigitalTwin
 
             for (int i = archiveListContainer.childCount - 1; i >= 0; i--)
             {
-                Destroy(archiveListContainer.GetChild(i).gameObject);
+                GameObject child = archiveListContainer.GetChild(i).gameObject;
+                child.SetActive(false); // 立即移出布局，避免刷新时与旧行短暂重叠
+                Destroy(child);
             }
 
             List<string> list = PointCloudArchive.ListArchives();
@@ -2452,12 +2932,27 @@ namespace DigitalTwin
                 return;
             }
 
-            string label = $"{meta.createdAt}    截面 {meta.sectionCount}    缺陷 {meta.defects.Count}";
-            Button btn = UIFactory.CreateButton(archiveListContainer, "Archive_" + meta.name, label, 14);
+            // 行容器：横向排列 [读取按钮][删除按钮]
+            GameObject rowGO = new GameObject("ArchiveRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+            rowGO.transform.SetParent(archiveListContainer, false);
 
-            LayoutElement le = btn.gameObject.AddComponent<LayoutElement>();
-            le.preferredHeight = 48f;
-            le.minHeight = 48f;
+            LayoutElement rowLE = rowGO.AddComponent<LayoutElement>();
+            rowLE.preferredHeight = 48f;
+            rowLE.minHeight = 48f;
+
+            HorizontalLayoutGroup hlg = rowGO.GetComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 8f;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = true;
+
+            string label = $"{meta.createdAt}    截面 {meta.sectionCount}    缺陷 {meta.defects.Count}";
+            Button btn = UIFactory.CreateButton(rowGO.transform, "Archive_" + meta.name, label, 14);
+            LayoutElement loadLE = btn.gameObject.AddComponent<LayoutElement>();
+            loadLE.flexibleWidth = 1f;
+            loadLE.minHeight = 48f;
 
             Text t = btn.GetComponentInChildren<Text>();
             if (t != null)
@@ -2470,6 +2965,40 @@ namespace DigitalTwin
 
             string captured = dir;
             btn.onClick.AddListener(() => LoadArchive(captured));
+
+            // 删除按钮（红色调，避免误点）
+            Button del = UIFactory.CreateButton(rowGO.transform, "Delete_" + meta.name, "删除", 14);
+            LayoutElement delLE = del.gameObject.AddComponent<LayoutElement>();
+            delLE.preferredWidth = 72f;
+            delLE.minWidth = 72f;
+            delLE.minHeight = 48f;
+
+            Image delImg = del.GetComponent<Image>();
+            delImg.color = Color.white; // 颜色交给 ColorBlock
+            ColorBlock dcb = del.colors;
+            dcb.normalColor = new Color(0.35f, 0.1f, 0.12f, 0.9f);
+            dcb.highlightedColor = new Color(0.5f, 0.15f, 0.18f, 0.95f);
+            dcb.pressedColor = new Color(0.7f, 0.2f, 0.22f, 1f);
+            dcb.selectedColor = new Color(0.6f, 0.18f, 0.2f, 1f);
+            del.colors = dcb;
+
+            del.onClick.AddListener(() => DeleteArchive(captured));
+        }
+
+        /// <summary>删除一个本地存档并刷新列表。</summary>
+        private void DeleteArchive(string dir)
+        {
+            ArchiveMeta meta = PointCloudArchive.ReadMeta(dir);
+            string name = meta != null ? meta.name : Path.GetFileName(dir);
+
+            if (!PointCloudArchive.Delete(dir))
+            {
+                ShowNotice("删除失败，请查看控制台。", true);
+                return;
+            }
+
+            ShowNotice($"已删除本地建模：{name}");
+            RefreshArchiveList();
         }
 
         /// <summary>读取指定存档并应用到场景与重建面板。</summary>
@@ -2646,6 +3175,743 @@ namespace DigitalTwin
             btn.onClick.AddListener(() => ShowDefectImage(rec));
         }
 
+        // ===================== 脚本编写 =====================
+        private void BuildScriptPanel()
+        {
+            GameObject overlayGO = new GameObject("ScriptOverlay", typeof(RectTransform), typeof(Image));
+            overlayGO.transform.SetParent(canvas.transform, false);
+            overlayGO.transform.SetAsLastSibling();
+
+            Image overlayImg = overlayGO.GetComponent<Image>();
+            overlayImg.color = new Color(0f, 0f, 0f, 0.6f);
+
+            RectTransform overlayRT = overlayGO.GetComponent<RectTransform>();
+            overlayRT.anchorMin = Vector2.zero;
+            overlayRT.anchorMax = Vector2.one;
+            overlayRT.offsetMin = Vector2.zero;
+            overlayRT.offsetMax = Vector2.zero;
+
+            RectTransform panel = UIFactory.CreatePanel(overlayGO.transform, "ScriptPanel", UIFactory.BgPanel, UIFactory.BorderCyan);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.anchoredPosition = Vector2.zero;
+            panel.sizeDelta = new Vector2(1060, 640);
+
+            AddWindowTitleBar(panel, "脚本编写", CloseScriptPanel, 760f, 460f);
+
+            // ---- 左侧：脚本编辑区（多行、可滚动）----
+            GameObject scrollGO = new GameObject("EditorScroll", typeof(RectTransform), typeof(ScrollRect));
+            scrollGO.transform.SetParent(panel, false);
+            RectTransform scrollRT = scrollGO.GetComponent<RectTransform>();
+            scrollRT.anchorMin = new Vector2(0f, 0f);
+            scrollRT.anchorMax = new Vector2(0.66f, 1f);
+            scrollRT.offsetMin = new Vector2(18f, 18f);
+            scrollRT.offsetMax = new Vector2(-10f, -46f);
+
+            ScrollRect sr = scrollGO.GetComponent<ScrollRect>();
+            sr.horizontal = false;
+            sr.vertical = true;
+            sr.scrollSensitivity = 30f;
+            sr.movementType = ScrollRect.MovementType.Clamped;
+            scriptScroll = sr;
+
+            GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
+            viewportGO.transform.SetParent(scrollGO.transform, false);
+            RectTransform vpRT = viewportGO.GetComponent<RectTransform>();
+            vpRT.anchorMin = Vector2.zero;
+            vpRT.anchorMax = Vector2.one;
+            vpRT.offsetMin = Vector2.zero;
+            vpRT.offsetMax = Vector2.zero;
+            scriptViewportRect = vpRT;
+
+            GameObject editorBgGO = new GameObject("EditorBg", typeof(RectTransform), typeof(Image));
+            editorBgGO.transform.SetParent(viewportGO.transform, false);
+            Image editorBg = editorBgGO.GetComponent<Image>();
+            editorBg.color = new Color(0.0784f, 0.0941f, 0.1137f, 1f);
+            editorBg.raycastTarget = false;
+            RectTransform editorBgRT = editorBgGO.GetComponent<RectTransform>();
+            editorBgRT.anchorMin = Vector2.zero;
+            editorBgRT.anchorMax = Vector2.one;
+            editorBgRT.offsetMin = Vector2.zero;
+            editorBgRT.offsetMax = Vector2.zero;
+
+            scriptInput = UIFactory.CreateInputField(viewportGO.transform, "ScriptInput", "", scriptFontSize);
+            scriptInput.lineType = InputField.LineType.MultiLineNewline;
+            scriptInput.textComponent.alignment = TextAnchor.UpperLeft;
+            scriptInput.textComponent.horizontalOverflow = HorizontalWrapMode.Wrap;
+            scriptInput.textComponent.verticalOverflow = VerticalWrapMode.Overflow;
+            scriptInput.textComponent.supportRichText = false;
+            scriptInput.textComponent.color = new Color(0.85f, 0.9f, 0.98f, 1f);
+            if (scriptInput.placeholder is Text ph)
+            {
+                ph.text = "在此编写脚本（每个 tick 自动执行一次）…\n\n示例：\n// 读取只读数据，控制本地变量\nif (car_speed > 3) {\n    print(\"速度过快：\" + car_speed);\n    throttle = 0;\n}\ncamera_angle = (camera_angle + 1) % 360;";
+                ph.alignment = TextAnchor.UpperLeft;
+                ph.color = new Color(0.45f, 0.52f, 0.6f, 0.85f);
+            }
+
+            // 输入框锚定在视口顶部，宽度铺满；高度每帧按内容自适应（不小于视口高度，保证可点击）
+            RectTransform inRT = scriptInput.GetComponent<RectTransform>();
+            inRT.anchorMin = new Vector2(0f, 1f);
+            inRT.anchorMax = new Vector2(1f, 1f);
+            inRT.pivot = new Vector2(0.5f, 1f);
+            inRT.anchoredPosition = new Vector2(0f, 0f);
+            inRT.sizeDelta = new Vector2(0f, 0f);
+
+            sr.viewport = vpRT;
+            sr.content = inRT;
+            scriptInput.onValueChanged.AddListener(_ =>
+            {
+                // 在末尾输入时自动滚到底部，便于继续编写；编辑中间内容时不打扰
+                if (scriptScroll != null && scriptInput.caretPosition >= scriptInput.text.Length)
+                {
+                    Canvas.ForceUpdateCanvases();
+                    scriptScroll.verticalNormalizedPosition = 0f;
+                }
+            });
+
+            // ---- 左侧下半：运行输出（print 的结果，只读、可滚动）----
+            // 运行输出已移到左栏「脚本编写」按钮下方常驻显示，见 BuildLeftSidebar。
+            // 此处不再重复创建弹窗内输出区。
+
+            // ---- 右侧：状态 + 四个操作按钮 + 变量说明 ----
+            GameObject sideGO = new GameObject("SideColumn", typeof(RectTransform));
+            sideGO.transform.SetParent(panel, false);
+            RectTransform sideRT = sideGO.GetComponent<RectTransform>();
+            sideRT.anchorMin = new Vector2(0.67f, 0f);
+            sideRT.anchorMax = new Vector2(1f, 1f);
+            sideRT.offsetMin = new Vector2(10f, 18f);
+            sideRT.offsetMax = new Vector2(-18f, -46f);
+
+            scriptStatusText = UIFactory.CreateText(sideRT, "ScriptStatus", "状态：未注入", 13, UIFactory.TextDim, TextAnchor.UpperLeft);
+            RectTransform stRT = scriptStatusText.GetComponent<RectTransform>();
+            stRT.anchorMin = new Vector2(0f, 1f);
+            stRT.anchorMax = new Vector2(1f, 1f);
+            stRT.pivot = new Vector2(0.5f, 1f);
+            stRT.anchoredPosition = new Vector2(0f, 0f);
+            stRT.sizeDelta = new Vector2(0f, 58f);
+            scriptStatusText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            scriptStatusText.verticalOverflow = VerticalWrapMode.Truncate;
+
+            Button injectBtn = UIFactory.CreateButton(sideRT, "InjectBtn", "注入脚本", 15);
+            PlaceStacked(injectBtn, 0f, 40f, 66f);
+            injectBtn.onClick.AddListener(OnInjectScriptClicked);
+
+            Button clearBtn = UIFactory.CreateButton(sideRT, "ClearBtn", "清除脚本", 15);
+            PlaceStacked(clearBtn, 0f, 40f, 114f);
+            clearBtn.onClick.AddListener(OnClearScriptClicked);
+
+            Button listBtn = UIFactory.CreateButton(sideRT, "MyScriptBtn", "我的脚本", 15);
+            PlaceStacked(listBtn, 0f, 40f, 162f);
+            listBtn.onClick.AddListener(OpenScriptListPanel);
+
+            Button saveBtn = UIFactory.CreateButton(sideRT, "SaveScriptBtn", "保存脚本", 15);
+            PlaceStacked(saveBtn, 0f, 40f, 210f);
+            saveBtn.onClick.AddListener(OnSaveScriptClicked);
+
+            Text hint = UIFactory.CreateText(sideRT, "VarHint",
+                "可用变量\n" +
+                "【可读写】\n" +
+                "speed, throttle, drive_mode(\"auto\"/\"manual\")\n" +
+                "cruise_gear, camera_speed, camera_manual_speed\n" +
+                "camera_auto_rotate, camera_angle\n" +
+                "pipe_model, pointcloud_rebuild\n" +
+                "【只读】\n" +
+                "is_connected, car_speed, distance, speed_limit\n" +
+                "pos_x, pos_y, pos_z, heading, gimbal_angle\n" +
+                "radius, deviation, ellipticity, confidence\n" +
+                "detection_count, section_count, avg_radius\n" +
+                "time, delta_time, frame, PI, E",
+                12, UIFactory.TextDim, TextAnchor.UpperLeft);
+            RectTransform hRT = hint.GetComponent<RectTransform>();
+            hRT.anchorMin = new Vector2(0f, 0f);
+            hRT.anchorMax = new Vector2(1f, 1f);
+            hRT.offsetMin = new Vector2(0f, 0f);
+            hRT.offsetMax = new Vector2(0f, -262f);
+            hint.horizontalOverflow = HorizontalWrapMode.Wrap;
+            hint.verticalOverflow = VerticalWrapMode.Overflow;
+
+            scriptPanel = overlayGO;
+            scriptPanel.SetActive(false);
+        }
+
+        /// <summary>把控件锚定在父容器顶部，左侧留出（left）宽度，距顶（top）像素，高 h。</summary>
+        private static void PlaceStacked(Component comp, float left, float h, float top)
+        {
+            RectTransform rt = comp.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0f, 1f);
+            rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(0.5f, 1f);
+            rt.anchoredPosition = new Vector2(left * 0.5f, -top);
+            rt.sizeDelta = new Vector2(-left, h);
+        }
+
+        private void BuildScriptListPanel()
+        {
+            GameObject overlayGO = new GameObject("ScriptListOverlay", typeof(RectTransform), typeof(Image));
+            overlayGO.transform.SetParent(canvas.transform, false);
+            overlayGO.transform.SetAsLastSibling();
+
+            Image overlayImg = overlayGO.GetComponent<Image>();
+            overlayImg.color = new Color(0f, 0f, 0f, 0.7f);
+
+            RectTransform overlayRT = overlayGO.GetComponent<RectTransform>();
+            overlayRT.anchorMin = Vector2.zero;
+            overlayRT.anchorMax = Vector2.one;
+            overlayRT.offsetMin = Vector2.zero;
+            overlayRT.offsetMax = Vector2.zero;
+
+            RectTransform panel = UIFactory.CreatePanel(overlayGO.transform, "ScriptListPanel", UIFactory.BgPanel, UIFactory.BorderCyan);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.anchoredPosition = Vector2.zero;
+            panel.sizeDelta = new Vector2(760, 520);
+
+            AddWindowTitleBar(panel, "我的脚本 · 读取本地脚本", CloseScriptListPanel, 480f, 320f);
+
+            GameObject scrollGO = new GameObject("ScriptScroll", typeof(RectTransform), typeof(ScrollRect));
+            scrollGO.transform.SetParent(panel, false);
+            RectTransform scrollRT = scrollGO.GetComponent<RectTransform>();
+            scrollRT.anchorMin = new Vector2(0, 0);
+            scrollRT.anchorMax = new Vector2(1, 1);
+            scrollRT.offsetMin = new Vector2(18, 20);
+            scrollRT.offsetMax = new Vector2(-18, -46);
+
+            ScrollRect sr = scrollGO.GetComponent<ScrollRect>();
+            sr.horizontal = false;
+            sr.vertical = true;
+            sr.scrollSensitivity = 24f;
+
+            GameObject viewportGO = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
+            viewportGO.transform.SetParent(scrollGO.transform, false);
+            RectTransform vpRT = viewportGO.GetComponent<RectTransform>();
+            vpRT.anchorMin = Vector2.zero;
+            vpRT.anchorMax = Vector2.one;
+            vpRT.offsetMin = Vector2.zero;
+            vpRT.offsetMax = Vector2.zero;
+
+            GameObject contentGO = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            contentGO.transform.SetParent(viewportGO.transform, false);
+            scriptListContainer = contentGO.GetComponent<RectTransform>();
+            scriptListContainer.anchorMin = new Vector2(0, 1);
+            scriptListContainer.anchorMax = new Vector2(1, 1);
+            scriptListContainer.pivot = new Vector2(0.5f, 1);
+            scriptListContainer.anchoredPosition = Vector2.zero;
+            scriptListContainer.sizeDelta = new Vector2(0, 0);
+
+            VerticalLayoutGroup vlg = contentGO.GetComponent<VerticalLayoutGroup>();
+            vlg.spacing = 8f;
+            vlg.childAlignment = TextAnchor.UpperCenter;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+            vlg.padding = new RectOffset(6, 6, 6, 6);
+
+            ContentSizeFitter csf = contentGO.GetComponent<ContentSizeFitter>();
+            csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            sr.viewport = vpRT;
+            sr.content = scriptListContainer;
+
+            scriptListPanel = overlayGO;
+            scriptListPanel.SetActive(false);
+        }
+
+        private void BuildScriptNamePanel()
+        {
+            GameObject overlayGO = new GameObject("ScriptNameOverlay", typeof(RectTransform), typeof(Image));
+            overlayGO.transform.SetParent(canvas.transform, false);
+            overlayGO.transform.SetAsLastSibling();
+
+            Image overlayImg = overlayGO.GetComponent<Image>();
+            overlayImg.color = new Color(0f, 0f, 0f, 0.7f);
+
+            RectTransform overlayRT = overlayGO.GetComponent<RectTransform>();
+            overlayRT.anchorMin = Vector2.zero;
+            overlayRT.anchorMax = Vector2.one;
+            overlayRT.offsetMin = Vector2.zero;
+            overlayRT.offsetMax = Vector2.zero;
+
+            RectTransform panel = UIFactory.CreatePanel(overlayGO.transform, "ScriptNamePanel", UIFactory.BgPanel, UIFactory.BorderCyan);
+            panel.anchorMin = new Vector2(0.5f, 0.5f);
+            panel.anchorMax = new Vector2(0.5f, 0.5f);
+            panel.pivot = new Vector2(0.5f, 0.5f);
+            panel.anchoredPosition = Vector2.zero;
+            panel.sizeDelta = new Vector2(460, 210);
+
+            AddWindowTitleBar(panel, "保存脚本", CloseScriptNamePanel, 360f, 170f);
+
+            Text lab = UIFactory.CreateText(panel, "NameLabel", "脚本名称", 14, UIFactory.TextPrimary, TextAnchor.MiddleLeft);
+            RectTransform labRT = lab.GetComponent<RectTransform>();
+            labRT.anchorMin = new Vector2(0f, 1f);
+            labRT.anchorMax = new Vector2(1f, 1f);
+            labRT.pivot = new Vector2(0.5f, 1f);
+            labRT.anchoredPosition = new Vector2(0f, -46f);
+            labRT.sizeDelta = new Vector2(-40f, 20f);
+
+            scriptNameInput = UIFactory.CreateInputField(panel, "ScriptNameInput", "", 14);
+            RectTransform inRT = scriptNameInput.GetComponent<RectTransform>();
+            inRT.anchorMin = new Vector2(0f, 1f);
+            inRT.anchorMax = new Vector2(1f, 1f);
+            inRT.pivot = new Vector2(0.5f, 1f);
+            inRT.anchoredPosition = new Vector2(0f, -72f);
+            inRT.sizeDelta = new Vector2(-40f, 34f);
+            scriptNameInput.characterLimit = 40;
+            scriptNameInput.onSubmit.AddListener(_ => OnConfirmScriptName());
+
+            Button cancelBtn = UIFactory.CreateButton(panel, "NameCancelBtn", "取消", 15);
+            RectTransform caRT = cancelBtn.GetComponent<RectTransform>();
+            caRT.anchorMin = new Vector2(0f, 0f);
+            caRT.anchorMax = new Vector2(0.5f, 0f);
+            caRT.offsetMin = new Vector2(24f, 18f);
+            caRT.offsetMax = new Vector2(-10f, 52f);
+            cancelBtn.onClick.AddListener(CloseScriptNamePanel);
+
+            Button okBtn = UIFactory.CreateButton(panel, "NameOkBtn", "保存", 15);
+            RectTransform okRT = okBtn.GetComponent<RectTransform>();
+            okRT.anchorMin = new Vector2(0.5f, 0f);
+            okRT.anchorMax = new Vector2(1f, 0f);
+            okRT.offsetMin = new Vector2(10f, 18f);
+            okRT.offsetMax = new Vector2(-24f, 52f);
+            okBtn.onClick.AddListener(OnConfirmScriptName);
+
+            scriptNamePanel = overlayGO;
+            scriptNamePanel.SetActive(false);
+        }
+
+        private void OpenScriptNamePanel()
+        {
+            if (scriptNamePanel == null)
+            {
+                return;
+            }
+            if (scriptNameInput != null)
+            {
+                // 预填一个默认名称，用户可直接改
+                scriptNameInput.text = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                scriptNameInput.ActivateInputField();
+                scriptNameInput.Select();
+            }
+            scriptNamePanel.SetActive(true);
+        }
+
+        private void CloseScriptNamePanel()
+        {
+            if (scriptNamePanel != null)
+            {
+                scriptNamePanel.SetActive(false);
+            }
+        }
+
+        private void OnConfirmScriptName()
+        {
+            string name = scriptNameInput != null ? scriptNameInput.text.Trim() : "";
+            if (string.IsNullOrEmpty(name))
+            {
+                name = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            }
+
+            string src = scriptInput != null ? scriptInput.text : "";
+            string path = ScriptStorage.Save(name, src);
+            CloseScriptNamePanel();
+
+            if (string.IsNullOrEmpty(path))
+            {
+                ShowScriptMsg("保存失败，请查看控制台。", true);
+                return;
+            }
+            ShowScriptMsg("已保存脚本：" + name, false);
+        }
+
+        private void OpenScriptPanel()
+        {
+            if (scriptPanel == null)
+            {
+                return;
+            }
+            // 若当前有已注入脚本且编辑框为空，载入已注入内容，方便继续修改
+            if (scriptInput != null && string.IsNullOrEmpty(scriptInput.text) && scriptRunner != null && scriptRunner.IsActive)
+            {
+                scriptInput.text = scriptRunner.Source;
+            }
+            scriptPanel.SetActive(true);
+        }
+
+        private void CloseScriptPanel()
+        {
+            if (scriptPanel != null)
+            {
+                scriptPanel.SetActive(false);
+            }
+        }
+
+        private void OpenScriptListPanel()
+        {
+            if (scriptListPanel == null)
+            {
+                return;
+            }
+            RefreshScriptList();
+            scriptListPanel.SetActive(true);
+        }
+
+        private void CloseScriptListPanel()
+        {
+            if (scriptListPanel != null)
+            {
+                scriptListPanel.SetActive(false);
+            }
+        }
+
+        private void OnInjectScriptClicked()
+        {
+            if (scriptRunner == null)
+            {
+                ShowScriptMsg("脚本运行器未就绪。", true);
+                return;
+            }
+            string src = scriptInput != null ? scriptInput.text : "";
+            if (string.IsNullOrEmpty(src))
+            {
+                ShowScriptMsg("脚本为空，请先编写内容。", true);
+                return;
+            }
+
+            if (scriptRunner.Inject(src))
+            {
+                ShowScriptMsg("注入成功，脚本将每个 tick 自动执行。", false);
+            }
+            else
+            {
+                ShowScriptMsg("注入失败：" + scriptRunner.LastError, true);
+            }
+        }
+
+        private void OnClearScriptClicked()
+        {
+            if (scriptRunner == null)
+            {
+                return;
+            }
+            scriptRunner.Clear();
+            ShowScriptMsg("已清除脚本，变量与输出恢复初始状态。", false);
+        }
+
+        private void OnSaveScriptClicked()
+        {
+            string src = scriptInput != null ? scriptInput.text : "";
+            if (string.IsNullOrEmpty(src))
+            {
+                ShowScriptMsg("脚本为空，无需保存。", true);
+                return;
+            }
+            OpenScriptNamePanel();
+        }
+
+        private void ShowScriptMsg(string msg, bool error)
+        {
+            scriptMsg = msg;
+            scriptMsgError = error;
+            scriptMsgTimer = 4f;
+        }
+
+        private void UpdateScriptStatus()
+        {
+            if (scriptStatusText == null)
+            {
+                return;
+            }
+
+            if (scriptMsgTimer > 0f)
+            {
+                scriptMsgTimer -= Time.deltaTime;
+                scriptStatusText.text = scriptMsg;
+                scriptStatusText.color = scriptMsgError ? new Color(1f, 0.45f, 0.4f) : UIFactory.AccentGreen;
+                return;
+            }
+
+            if (scriptRunner == null)
+            {
+                scriptStatusText.text = "状态：脚本运行器未就绪";
+                scriptStatusText.color = UIFactory.TextDim;
+                return;
+            }
+
+            if (!scriptRunner.IsActive)
+            {
+                scriptStatusText.text = "状态：未注入\n点击「注入脚本」后生效";
+                scriptStatusText.color = UIFactory.TextDim;
+            }
+            else if (!string.IsNullOrEmpty(scriptRunner.LastError))
+            {
+                scriptStatusText.text = "状态：已注入 · 运行出错（详见下方运行输出）";
+                scriptStatusText.color = new Color(1f, 0.45f, 0.4f);
+            }
+            else
+            {
+                scriptStatusText.text = "状态：运行中（每 tick 执行）";
+                scriptStatusText.color = UIFactory.AccentGreen;
+            }
+        }
+
+        /// <summary>把脚本 print 的输出刷新到左栏「运行输出」区（未被注入时显示提示），并自动滚到最新。</summary>
+        private void UpdateScriptOutput()
+        {
+            if (scriptOutputText == null)
+            {
+                return;
+            }
+
+            bool active = scriptRunner != null && scriptRunner.IsActive;
+            string output = active ? scriptRunner.LastOutput : "";
+
+            string show;
+            bool scrollToBottom = false;
+            if (!active)
+            {
+                // 未注入：显示提示并清空缓存
+                scriptOutputCache = null;
+                show = "（未注入脚本）";
+            }
+            else if (!string.IsNullOrEmpty(output))
+            {
+                // 有新输出：缓存并显示（避免被占位文本覆盖）
+                scriptOutputCache = output;
+                show = output;
+                scrollToBottom = true;
+            }
+            else
+            {
+                // 运行中但本帧无输出：保留上次输出，避免闪回占位文本
+                show = string.IsNullOrEmpty(scriptOutputCache) ? "（运行中，暂无 print 输出）" : scriptOutputCache;
+            }
+
+            if (scriptOutputText.text == show)
+            {
+                return;
+            }
+
+            scriptOutputText.text = show;
+            if (scrollToBottom && scriptOutputScroll != null)
+            {
+                Canvas.ForceUpdateCanvases();
+                scriptOutputScroll.verticalNormalizedPosition = 0f;
+            }
+        }
+
+        /// <summary>脚本编辑框高度自适应：不小于视口高度（保证整块可点击），内容更长时随之增长以便滚动。</summary>
+        private void UpdateScriptEditorLayout()
+        {
+            if (scriptInput == null || scriptViewportRect == null || !scriptInput.gameObject.activeInHierarchy)
+            {
+                return;
+            }
+
+            RectTransform inRT = scriptInput.GetComponent<RectTransform>();
+            float viewportH = scriptViewportRect.rect.height;
+            float preferred = LayoutUtility.GetPreferredHeight(inRT);
+            float target = Mathf.Max(viewportH, preferred);
+            if (Mathf.Abs(inRT.sizeDelta.y - target) > 0.5f)
+            {
+                inRT.sizeDelta = new Vector2(inRT.sizeDelta.x, target);
+            }
+        }
+
+        /// <summary>按住 Ctrl 并在编辑区内滚动滚轮：放大 / 缩小脚本字号。</summary>
+        private void UpdateScriptZoom()
+        {
+            if (scriptScroll != null)
+            {
+                scriptScroll.vertical = true;
+            }
+
+            if (scriptPanel == null || !scriptPanel.activeSelf || scriptInput == null || scriptViewportRect == null)
+            {
+                return;
+            }
+
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            if (!ctrl)
+            {
+                return;
+            }
+
+            if (!RectTransformUtility.RectangleContainsScreenPoint(scriptViewportRect, Input.mousePosition, null))
+            {
+                return;
+            }
+
+            // Ctrl 缩放期间暂停滚动，避免同时滚动
+            if (scriptScroll != null)
+            {
+                scriptScroll.vertical = false;
+            }
+
+            float scroll = Input.mouseScrollDelta.y;
+            if (Mathf.Abs(scroll) < 0.01f)
+            {
+                return;
+            }
+
+            ApplyScriptFontSize(scriptFontSize + (scroll > 0f ? 1 : -1));
+        }
+
+        private void ApplyScriptFontSize(int size)
+        {
+            int clamped = Mathf.Clamp(size, 8, 40);
+            if (clamped == scriptFontSize)
+            {
+                return;
+            }
+            scriptFontSize = clamped;
+
+            if (scriptInput != null)
+            {
+                scriptInput.textComponent.fontSize = clamped;
+                if (scriptInput.placeholder is Text ph)
+                {
+                    ph.fontSize = clamped;
+                }
+            }
+        }
+
+        private void RefreshScriptList()
+        {
+            if (scriptListContainer == null)
+            {
+                return;
+            }
+
+            for (int i = scriptListContainer.childCount - 1; i >= 0; i--)
+            {
+                GameObject child = scriptListContainer.GetChild(i).gameObject;
+                child.SetActive(false);
+                Destroy(child);
+            }
+
+            List<string> list = ScriptStorage.List();
+            if (list.Count == 0)
+            {
+                Text empty = UIFactory.CreateText(scriptListContainer, "Empty",
+                    "暂无本地脚本。\n请先在「脚本编写」面板中点击「保存脚本」。", 14, UIFactory.TextDim, TextAnchor.MiddleCenter);
+                LayoutElement le = empty.gameObject.AddComponent<LayoutElement>();
+                le.preferredHeight = 80f;
+                return;
+            }
+
+            foreach (string path in list)
+            {
+                AddScriptRow(path);
+            }
+        }
+
+        private void AddScriptRow(string path)
+        {
+            ScriptFile file = ScriptStorage.Read(path);
+            if (file == null)
+            {
+                return;
+            }
+
+            GameObject rowGO = new GameObject("ScriptRow", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+            rowGO.transform.SetParent(scriptListContainer, false);
+
+            LayoutElement rowLE = rowGO.AddComponent<LayoutElement>();
+            rowLE.preferredHeight = 48f;
+            rowLE.minHeight = 48f;
+
+            HorizontalLayoutGroup hlg = rowGO.GetComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 8f;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+            hlg.childForceExpandHeight = true;
+
+            string label = $"{file.name}    {file.createdAt}    行数 {CountLines(file.source)}";
+            Button btn = UIFactory.CreateButton(rowGO.transform, "Script_" + Path.GetFileNameWithoutExtension(path), label, 14);
+            LayoutElement loadLE = btn.gameObject.AddComponent<LayoutElement>();
+            loadLE.flexibleWidth = 1f;
+            loadLE.minHeight = 48f;
+
+            Text t = btn.GetComponentInChildren<Text>();
+            if (t != null)
+            {
+                t.alignment = TextAnchor.MiddleLeft;
+                RectTransform tRT = t.rectTransform;
+                tRT.offsetMin = new Vector2(14, 0);
+                tRT.offsetMax = new Vector2(-14, 0);
+            }
+
+            string captured = path;
+            btn.onClick.AddListener(() => LoadScriptFile(captured));
+
+            Button del = UIFactory.CreateButton(rowGO.transform, "Delete_" + Path.GetFileNameWithoutExtension(path), "删除", 14);
+            LayoutElement delLE = del.gameObject.AddComponent<LayoutElement>();
+            delLE.preferredWidth = 72f;
+            delLE.minWidth = 72f;
+            delLE.minHeight = 48f;
+
+            Image delImg = del.GetComponent<Image>();
+            delImg.color = Color.white;
+            ColorBlock dcb = del.colors;
+            dcb.normalColor = new Color(0.35f, 0.1f, 0.12f, 0.9f);
+            dcb.highlightedColor = new Color(0.5f, 0.15f, 0.18f, 0.95f);
+            dcb.pressedColor = new Color(0.7f, 0.2f, 0.22f, 1f);
+            dcb.selectedColor = new Color(0.6f, 0.18f, 0.2f, 1f);
+            del.colors = dcb;
+
+            del.onClick.AddListener(() => DeleteScriptFile(captured));
+        }
+
+        private void LoadScriptFile(string path)
+        {
+            ScriptFile file = ScriptStorage.Read(path);
+            if (file == null)
+            {
+                ShowScriptMsg("读取失败，请查看控制台。", true);
+                return;
+            }
+            if (scriptInput != null)
+            {
+                scriptInput.text = file.source;
+            }
+            CloseScriptListPanel();
+            ShowScriptMsg("已读取脚本：" + file.name, false);
+        }
+
+        private void DeleteScriptFile(string path)
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            if (!ScriptStorage.Delete(path))
+            {
+                ShowScriptMsg("删除失败，请查看控制台。", true);
+                return;
+            }
+            ShowScriptMsg("已删除本地脚本：" + name, false);
+            RefreshScriptList();
+        }
+
+        private static int CountLines(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return 0;
+            }
+            int n = 1;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '\n')
+                {
+                    n++;
+                }
+            }
+            return n;
+        }
+
         // ===================== 窗口拖拽 / 边框缩放 =====================
         private void RegisterWindow(RectTransform panel, RectTransform titleBar, float minWidth, float minHeight)
         {
@@ -2818,6 +4084,12 @@ namespace DigitalTwin
                 return;
             }
 
+            // 「回到实时建模」仅在查看本地存档时可用，避免实时模式下误清空
+            if (backToLiveBtn != null)
+            {
+                backToLiveBtn.interactable = !pointCloudRebuilder.LiveEnabled;
+            }
+
             if (pointCloudRebuilder.HasResult)
             {
                 MeshFilter mf = pointCloudRebuilder.ResultMeshFilter;
@@ -2829,6 +4101,10 @@ namespace DigitalTwin
                 {
                     rebuildStatusText.text = $"已累积 {pointCloudRebuilder.SectionCount} 环截面";
                 }
+            }
+            else if (!pointCloudRebuilder.LiveEnabled)
+            {
+                rebuildStatusText.text = "正在查看本地存档…";
             }
             else
             {
@@ -2925,6 +4201,18 @@ namespace DigitalTwin
             else if (archivePanel != null && archivePanel.activeSelf)
             {
                 CloseArchivePanel();
+            }
+            else if (scriptNamePanel != null && scriptNamePanel.activeSelf)
+            {
+                CloseScriptNamePanel();
+            }
+            else if (scriptListPanel != null && scriptListPanel.activeSelf)
+            {
+                CloseScriptListPanel();
+            }
+            else if (scriptPanel != null && scriptPanel.activeSelf)
+            {
+                CloseScriptPanel();
             }
             else if (rebuildPanel != null && rebuildPanel.activeSelf)
             {

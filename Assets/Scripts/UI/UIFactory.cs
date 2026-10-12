@@ -9,24 +9,32 @@ namespace DigitalTwin
     /// </summary>
     public static class UIFactory
     {
-        // ===== 深空未来感配色 =====
-        /// <summary>深空底色：用作 3D 主相机背景，让 3D 区域自带深空通透感。</summary>
-        public static readonly Color BgRoot = new Color(0.012f, 0.024f, 0.052f, 1f);
-        /// <summary>顶栏 / 子面板底色。</summary>
-        public static readonly Color BgDark = new Color(0.024f, 0.052f, 0.098f, 0.92f);
-        /// <summary>主面板底色。</summary>
-        public static readonly Color BgPanel = new Color(0.035f, 0.072f, 0.132f, 0.86f);
-        public static readonly Color BorderCyan = new Color(0.0f, 0.86f, 1f, 0.9f);
-        public static readonly Color BorderDim = new Color(0.0f, 0.52f, 0.72f, 0.38f);
-        public static readonly Color TextPrimary = new Color(0.88f, 0.96f, 1f);
-        public static readonly Color TextDim = new Color(0.44f, 0.62f, 0.76f);
-        public static readonly Color AccentCyan = new Color(0.0f, 0.90f, 1f);
-        public static readonly Color AccentGreen = new Color(0.25f, 1f, 0.62f);
-        public static readonly Color AccentOrange = new Color(1f, 0.64f, 0.22f);
-        public static readonly Color AccentPurple = new Color(0.66f, 0.46f, 1f);
-        public static readonly Color AccentBlue = new Color(0.26f, 0.62f, 1f);
-        /// <summary>面板顶部微光（青色冷光）。</summary>
-        public static readonly Color PanelGlow = new Color(0.0f, 0.85f, 1f, 0.16f);
+        // ===== 工业仪表盘配色（参照《管道探测小车 · 数字孪生平台》原型）=====
+        /// <summary>页面底色 #171a1f：用作 3D 主相机背景与整体背景。</summary>
+        public static readonly Color BgRoot = new Color(0.0902f, 0.1020f, 0.1216f, 1f);
+        /// <summary>顶栏 / 底栏底色 #20242a。</summary>
+        public static readonly Color BgDark = new Color(0.1255f, 0.1412f, 0.1647f, 1f);
+        /// <summary>主面板底色 #22262c（surface）。</summary>
+        public static readonly Color BgPanel = new Color(0.1333f, 0.1490f, 0.1725f, 1f);
+        /// <summary>主分隔线 #3b4148。</summary>
+        public static readonly Color BorderCyan = new Color(0.2314f, 0.2549f, 0.2824f, 1f);
+        /// <summary>次分隔线 #30363e。</summary>
+        public static readonly Color BorderDim = new Color(0.1882f, 0.2118f, 0.2431f, 1f);
+        public static readonly Color TextPrimary = new Color(0.9137f, 0.9294f, 0.9490f, 1f);
+        public static readonly Color TextDim = new Color(0.6667f, 0.7020f, 0.7490f, 1f);
+        /// <summary>强调蓝 #6ea9f3。</summary>
+        public static readonly Color AccentCyan = new Color(0.4314f, 0.6627f, 0.9529f, 1f);
+        /// <summary>成功绿 #92c79e。</summary>
+        public static readonly Color AccentGreen = new Color(0.5725f, 0.7804f, 0.6196f, 1f);
+        /// <summary>警告橙 #e0b579。</summary>
+        public static readonly Color AccentOrange = new Color(0.8784f, 0.7098f, 0.4745f, 1f);
+        public static readonly Color AccentPurple = new Color(0.72f, 0.66f, 0.90f, 1f);
+        /// <summary>主色（按钮） #2463a2。</summary>
+        public static readonly Color AccentBlue = new Color(0.1412f, 0.3882f, 0.6353f, 1f);
+        /// <summary>危险色 #efa09d（退出 / 删除）。</summary>
+        public static readonly Color Danger = new Color(0.9373f, 0.6275f, 0.6157f, 1f);
+        /// <summary>面板顶部微光（几乎不可见，仅为层次感）。</summary>
+        public static readonly Color PanelGlow = new Color(0.43f, 0.66f, 0.95f, 0.05f);
 
         private static Font _font;
         public static Font Font
@@ -40,6 +48,61 @@ namespace DigitalTwin
                 }
                 return _font;
             }
+        }
+
+        // ===== 圆角（用九宫格精灵实现）=====
+        private static Sprite _roundSprite;
+        /// <summary>圆角矩形（九宫格）精灵：所有面板 / 按钮 / 输入框共用。</summary>
+        public static Sprite RoundSprite
+        {
+            get
+            {
+                if (_roundSprite == null)
+                {
+                    _roundSprite = CreateRoundedSprite(24, 6);
+                }
+                return _roundSprite;
+            }
+        }
+
+        /// <summary>生成白色圆角矩形精灵（alpha 做圆角 + 抗锯齿），并设置九宫格边框。</summary>
+        public static Sprite CreateRoundedSprite(int size, int radius)
+        {
+            int s = Mathf.Max(size, radius * 2 + 4);
+            Texture2D tex = new Texture2D(s, s, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            tex.hideFlags = HideFlags.HideAndDontSave;
+
+            Color32[] px = new Color32[s * s];
+            for (int y = 0; y < s; y++)
+            {
+                for (int x = 0; x < s; x++)
+                {
+                    float cx = Mathf.Clamp(x + 0.5f, radius, s - radius);
+                    float cy = Mathf.Clamp(y + 0.5f, radius, s - radius);
+                    float d = Mathf.Sqrt((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy));
+                    float a = Mathf.Clamp01(radius - d + 0.5f);
+                    px[y * s + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                }
+            }
+            tex.SetPixels32(px);
+            tex.Apply();
+
+            float b = radius + 1f;
+            return Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), 100f, 0,
+                SpriteMeshType.FullRect, new Vector4(b, b, b, b));
+        }
+
+        /// <summary>给一个 Image 应用圆角九宫格精灵。</summary>
+        public static void ApplyRounded(Image img)
+        {
+            if (img == null)
+            {
+                return;
+            }
+            img.sprite = RoundSprite;
+            img.type = Image.Type.Sliced;
         }
 
         /// <summary>生成竖向渐变纹理（top 亮 → bottom 透明），用于面板顶部冷光。</summary>
@@ -60,8 +123,8 @@ namespace DigitalTwin
             return tex;
         }
 
-        /// <summary>创建带圆角感（用多边框模拟）的面板。</summary>
-        public static RectTransform CreatePanel(Transform parent, string name, Color bg, Color border)
+        /// <summary>创建面板（可选圆角）。</summary>
+        public static RectTransform CreatePanel(Transform parent, string name, Color bg, Color border, bool rounded = true)
         {
             GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
             go.transform.SetParent(parent, false);
@@ -69,6 +132,7 @@ namespace DigitalTwin
             Image img = go.GetComponent<Image>();
             img.color = bg;
             img.raycastTarget = false;
+            if (rounded) ApplyRounded(img);
 
             // 加一条内边框
             GameObject borderGO = new GameObject("Border", typeof(RectTransform), typeof(Image));
@@ -76,6 +140,7 @@ namespace DigitalTwin
             Image bImg = borderGO.GetComponent<Image>();
             bImg.color = border;
             bImg.raycastTarget = false;
+            if (rounded) ApplyRounded(bImg);
 
             RectTransform bRT = borderGO.GetComponent<RectTransform>();
             bRT.anchorMin = Vector2.zero;
@@ -89,6 +154,7 @@ namespace DigitalTwin
             Image iImg = innerGO.GetComponent<Image>();
             iImg.color = bg;
             iImg.raycastTarget = false;
+            if (rounded) ApplyRounded(iImg);
 
             RectTransform iRT = innerGO.GetComponent<RectTransform>();
             iRT.anchorMin = Vector2.zero;
@@ -96,12 +162,8 @@ namespace DigitalTwin
             iRT.offsetMin = new Vector2(1, 1);
             iRT.offsetMax = new Vector2(-1, -1);
 
-            // 统一装饰：顶部冷光 + 四角 L 形角标（营造未来科技感）
-            RectTransform rt = go.GetComponent<RectTransform>();
-            AddTopGlow(rt, 60f);
-            AddCornerBrackets(rt, border);
-
-            return rt;
+            // 工业仪表盘风格：干净利落，不加发光与角标
+            return go.GetComponent<RectTransform>();
         }
 
         /// <summary>面板顶部向下淡出的青色冷光。</summary>
@@ -190,15 +252,17 @@ namespace DigitalTwin
             go.transform.SetParent(parent, false);
 
             Image img = go.GetComponent<Image>();
-            img.color = new Color(0.05f, 0.12f, 0.16f, 0.9f);
+            img.color = Color.white; // 颜色交给 ColorBlock（避免与状态色叠加变暗）
+            ApplyRounded(img);
 
             Button btn = go.AddComponent<Button>();
             ColorBlock cb = btn.colors;
-            cb.normalColor = new Color(0.05f, 0.12f, 0.16f, 0.9f);
-            cb.highlightedColor = new Color(0.1f, 0.3f, 0.38f, 0.95f);
-            cb.pressedColor = new Color(0.0f, 0.5f, 0.6f, 1f);
-            cb.selectedColor = new Color(0.0f, 0.45f, 0.55f, 1f);
-            cb.fadeDuration = 0.1f;
+            cb.normalColor = new Color(0.1647f, 0.1882f, 0.2157f, 1f);
+            cb.highlightedColor = new Color(0.2039f, 0.2353f, 0.2745f, 1f);
+            cb.pressedColor = new Color(0.2314f, 0.2784f, 0.3373f, 1f);
+            cb.selectedColor = new Color(0.2039f, 0.2353f, 0.2745f, 1f);
+            cb.disabledColor = new Color(0.1529f, 0.1725f, 0.2000f, 1f);
+            cb.fadeDuration = 0.12f;
             btn.colors = cb;
 
             Text t = CreateText(go.transform, "Label", label, size, TextPrimary, TextAnchor.MiddleCenter);
@@ -219,7 +283,8 @@ namespace DigitalTwin
             go.transform.SetParent(parent, false);
 
             Image img = go.GetComponent<Image>();
-            img.color = new Color(0.03f, 0.09f, 0.13f, 0.95f);
+            img.color = new Color(0.1020f, 0.1176f, 0.1412f, 1f); // #1a1e24 input
+            ApplyRounded(img);
 
             InputField input = go.GetComponent<InputField>();
             input.contentType = contentType;
@@ -264,29 +329,51 @@ namespace DigitalTwin
             return input;
         }
 
-        /// <summary>给面板加一个带标题的表头。</summary>
+        /// <summary>给面板加一个带下划线的表头。</summary>
         public static Text AddPanelHeader(RectTransform panel, string title)
         {
-            GameObject headerGO = new GameObject("Header", typeof(RectTransform), typeof(Image));
+            GameObject headerGO = new GameObject("Header", typeof(RectTransform));
             headerGO.transform.SetParent(panel, false);
-
-            Image hImg = headerGO.GetComponent<Image>();
-            hImg.color = new Color(0.0f, 0.4f, 0.5f, 0.5f);
-            hImg.raycastTarget = false;
 
             RectTransform hRT = headerGO.GetComponent<RectTransform>();
             hRT.anchorMin = new Vector2(0, 1);
             hRT.anchorMax = new Vector2(1, 1);
             hRT.pivot = new Vector2(0.5f, 1);
             hRT.anchoredPosition = Vector2.zero;
-            hRT.sizeDelta = new Vector2(0, 28);
+            hRT.sizeDelta = new Vector2(0, 42);
 
-            Text t = CreateText(headerGO.transform, "Title", title, 15, TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
+            // 左侧强调竖条
+            GameObject accentGO = new GameObject("Accent", typeof(RectTransform), typeof(Image));
+            accentGO.transform.SetParent(headerGO.transform, false);
+            Image aImg = accentGO.GetComponent<Image>();
+            aImg.color = AccentCyan;
+            aImg.raycastTarget = false;
+            RectTransform aRT = accentGO.GetComponent<RectTransform>();
+            aRT.anchorMin = new Vector2(0, 0.5f);
+            aRT.anchorMax = new Vector2(0, 0.5f);
+            aRT.pivot = new Vector2(0, 0.5f);
+            aRT.anchoredPosition = new Vector2(14, 0);
+            aRT.sizeDelta = new Vector2(3, 16);
+
+            Text t = CreateText(headerGO.transform, "Title", title, 14, TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
             RectTransform tRT = t.GetComponent<RectTransform>();
             tRT.anchorMin = new Vector2(0, 0);
             tRT.anchorMax = new Vector2(1, 1);
-            tRT.offsetMin = new Vector2(10, 0);
-            tRT.offsetMax = new Vector2(-10, 0);
+            tRT.offsetMin = new Vector2(25, 0);
+            tRT.offsetMax = new Vector2(-12, 0);
+
+            // 底部 1px 分隔线
+            GameObject lineGO = new GameObject("HeaderLine", typeof(RectTransform), typeof(Image));
+            lineGO.transform.SetParent(headerGO.transform, false);
+            Image lImg = lineGO.GetComponent<Image>();
+            lImg.color = BorderCyan;
+            lImg.raycastTarget = false;
+            RectTransform lRT = lineGO.GetComponent<RectTransform>();
+            lRT.anchorMin = new Vector2(0, 0);
+            lRT.anchorMax = new Vector2(1, 0);
+            lRT.pivot = new Vector2(0.5f, 0);
+            lRT.anchoredPosition = Vector2.zero;
+            lRT.sizeDelta = new Vector2(0, 1);
 
             return t;
         }
