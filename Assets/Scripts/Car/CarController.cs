@@ -45,6 +45,7 @@ namespace DigitalTwin
 
         private Rigidbody rb;
         private float currentSpeed;   // cm/s（场景单位）
+        private float? scriptThrottle; // 脚本油门覆盖（null = 未接管）
         private float initialHeight;
         private float totalDistance;  // cm
         private bool autoCruise;
@@ -80,6 +81,14 @@ namespace DigitalTwin
         public bool IsAutoCruise => autoCruise;
         /// <summary>车轮 Transform 列表（只读），供外部获取车轮位置（如绘制轮胎痕迹）。</summary>
         public IReadOnlyList<Transform> Wheels => wheels;
+        /// <summary>当前模式下的速度上限（cm/s，只读）。</summary>
+        public float SpeedLimitValue => SpeedLimit;
+
+        /// <summary>脚本油门覆盖：非 null 时小车油门由脚本决定（忽略按键与巡航）；传 null 恢复手动输入。</summary>
+        public void SetScriptThrottle(float? throttle)
+        {
+            scriptThrottle = throttle;
+        }
 
         /// <summary>开启自动巡航时，小车自动以前进油门行驶。</summary>
         public void SetAutoCruise(bool enabled)
@@ -171,7 +180,9 @@ namespace DigitalTwin
 
         private void Update()
         {
-            Throttle = autoCruise ? 1f : Input.GetAxisRaw("Vertical");
+            Throttle = scriptThrottle.HasValue
+                ? Mathf.Clamp(scriptThrottle.Value, -1f, 1f)
+                : (autoCruise ? 1f : Input.GetAxisRaw("Vertical"));
 
             // 当前占空比：自动巡航 = 挡位占空比；手动 = 油门 × 上限占空比
             DutyCycle = autoCruise

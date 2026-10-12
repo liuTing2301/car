@@ -14,12 +14,15 @@ namespace DigitalTwin
         [Header("引用")]
         [SerializeField] private RobotDataReader robotDataReader;
         [SerializeField] private Transform car;
+        [SerializeField] private CarController carController;
 
         [Header("重建参数")]
         [Tooltip("点云距离 → 场景尺寸的缩放系数。")]
         [SerializeField] private float pointScale = 1f;
         [Tooltip("重建结果所在的 Layer（用于预览相机隔离渲染，需与 UI 端保持一致）。")]
         [SerializeField] private int resultLayer = 31;
+        [Tooltip("小车速度低于此值（cm/s）时不建模：只有小车在移动时才累积截面。")]
+        [SerializeField] private float minSpeedToRebuild = 0.01f;
 
         [Header("持续重建")]
         [Tooltip("雷达传输数据时实时持续重建网格。")]
@@ -51,6 +54,8 @@ namespace DigitalTwin
         private float rebuildTimer;
         private bool hasRebuilt;
         private bool sectionsDirty;
+        // 是否接收实时雷达数据累积（读取本地存档时暂停，避免实时数据混入存档模型）
+        private bool liveEnabled = true;
 
         /// <summary>已累积的截面环数量。</summary>
         public int SectionCount => sections.Count;
@@ -59,10 +64,12 @@ namespace DigitalTwin
         /// <summary>平均管道半径（世界坐标，用于调试标记缩放等）。</summary>
         public float AverageRadius => avgRadius;
         public bool HasResult => hasResult;
+        /// <summary>当前是否处于实时累积状态（false 表示正在查看本地存档）。</summary>
+        public bool LiveEnabled => liveEnabled;
         /// <summary>重建结果网格（顶点为世界坐标）。</summary>
         public MeshFilter ResultMeshFilter => meshFilter;
 
-        public void Setup(RobotDataReader reader, Transform carTransform)
+        public void Setup(RobotDataReader reader, Transform carTransform, CarController controller)
         {
             if (robotDataReader != null)
             {
@@ -71,6 +78,7 @@ namespace DigitalTwin
 
             this.robotDataReader = reader;
             this.car = carTransform;
+            this.carController = controller;
 
             if (robotDataReader != null)
             {
@@ -121,6 +129,18 @@ namespace DigitalTwin
 
         private void HandlePointCloud(StatusPacket pkt)
         {
+            // 查看本地存档时暂停实时累积，避免实时数据混入存档模型
+            if (!liveEnabled)
+            {
+                return;
+            }
+
+            // 只有小车在移动（有速度）时才建模：静止时不断累积会得到大量重叠的截面
+            if (carController == null || carController.Speed < minSpeedToRebuild)
+            {
+                return;
+            }
+
             if (pkt == null || pkt.scan == null || car == null)
             {
                 return;
@@ -404,6 +424,19 @@ namespace DigitalTwin
             sectionSize = 0;
         }
 
+        /// <summary>回到实时建模：清空当前（存档）数据并恢复实时雷达累积。</summary>
+        public void ResumeLive()
+        {
+            Clear();
+            liveEnabled = true;
+        }
+
+        /// <summary>仅切换是否接收实时雷达累积（不清空已累积数据），供脚本 / UI 控制。</summary>
+        public void SetLive(bool enabled)
+        {
+            liveEnabled = enabled;
+        }
+
         /// <summary>导出当前累积的截面环（世界坐标）副本，用于本地存档。</summary>
         public Vector3[][] GetSections()
         {
@@ -419,6 +452,7 @@ namespace DigitalTwin
         public bool LoadSections(Vector3[][] data, float radius)
         {
             ResetAll();
+            liveEnabled = false;
             if (data == null || data.Length == 0 || data[0] == null || data[0].Length == 0)
             {
                 sectionSize = 0;

@@ -4,14 +4,14 @@ namespace DigitalTwin
 {
     /// <summary>
     /// 摄像头云台旋转控制器：挂在小车根节点上。
-    /// 按住 E 键持续旋转摄像头云台（带平滑动画），并记录当前旋转角度。
+    /// 按住 Q 键正转、按住 E 键反转（带平滑动画），并记录当前旋转角度。
     /// 自动巡航时可按设定速度自动旋转，用于管道环视扫描。
     /// 优先查找小车下已存在的摄像头/云台子物体；找不到时自动创建一个可视化云台。
     /// </summary>
     public class CameraRotor : MonoBehaviour
     {
         [Header("手动旋转")]
-        [Tooltip("按住 E 键时云台旋转速度（度/秒）。")]
+        [Tooltip("按住 Q（正转）/ E（反转）时云台旋转速度（度/秒）。")]
         [SerializeField] private float manualRotateSpeed = 90f;
 
         [Header("自动巡航旋转")]
@@ -55,6 +55,9 @@ namespace DigitalTwin
         private float autoRotateAccumulated;
         private float lastCurrentAngle;
 
+        // 手动旋转方向：1 = Q 正转，-1 = E 反转，0 = 未按
+        private float manualDirection;
+
         /// <summary>需要跟随摄像头同步旋转的部件。</summary>
         private class Follower
         {
@@ -78,8 +81,15 @@ namespace DigitalTwin
         }
         /// <summary>当前自动旋转的实际速度（带方向，正/负），用于下发给下位机。</summary>
         public float CurrentAutoRotateSpeed => autoRotateSpeed * autoRotateDirection;
-        /// <summary>当前是否正在自动旋转（自动巡航且未手动干预）。</summary>
-        public bool IsAutoRotating => autoRotate && !Input.GetKey(KeyCode.E);
+        /// <summary>当前手动旋转的实际速度（带方向，正/负），用于下发给下位机。</summary>
+        public float CurrentManualRotateSpeed => manualRotateSpeed * manualDirection;
+        /// <summary>当前是否处于自动旋转（自动巡航）。自动旋转时手动输入被禁用。</summary>
+        public bool IsAutoRotating => autoRotate;
+        /// <summary>直接设定云台目标角度（度），用于脚本控制。</summary>
+        public void SetAngle(float deg)
+        {
+            targetAngle = deg;
+        }
         /// <summary>云台物体（供外部访问，可为 null）。</summary>
         public Transform Gimbal => gimbal;
 
@@ -116,13 +126,19 @@ namespace DigitalTwin
                 return;
             }
 
-            bool isAutoRotating = autoRotate && !Input.GetKey(KeyCode.E);
+            // 自动巡航时禁用手动输入，完全由自动逻辑接管
+            bool manualAllowed = !autoRotate;
+            bool forward = manualAllowed && Input.GetKey(KeyCode.Q);
+            bool reverse = manualAllowed && Input.GetKey(KeyCode.E);
+            manualDirection = forward ? 1f : (reverse ? -1f : 0f);
+            bool manual = manualDirection != 0f;
+            bool isAutoRotating = autoRotate;
 
-            // 按住 E 键手动旋转优先；否则自动巡航时按方向自动旋转
+            // 自动巡航时按方向自动旋转；手动模式下 Q 正转 / E 反转
             float speed = 0f;
-            if (Input.GetKey(KeyCode.E))
+            if (manual)
             {
-                speed = manualRotateSpeed;
+                speed = manualRotateSpeed * manualDirection;
             }
             else if (autoRotate)
             {
@@ -140,7 +156,7 @@ namespace DigitalTwin
             // 本帧实际旋转角度增量
             float angleDelta = currentAngle - lastCurrentAngle;
 
-            // 自动往复：监测 Unity 实际旋转角度，转满 reverseAngle 后自动反向
+            // 自动往复：监测实际旋转角度，转满 reverseAngle 后自动反向
             if (isAutoRotating)
             {
                 autoRotateAccumulated += angleDelta;

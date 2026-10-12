@@ -117,15 +117,6 @@ namespace DigitalTwin
             trailMeshFilter.mesh = trailMesh;
         }
 
-        private void OnEnable()
-        {
-            // 每次重新显示时，从当前位置重新生成管道
-            initialized = false;
-            loggedLimit = false;
-            trailInited = false;
-            ResetMesh();
-        }
-
         private void Update()
         {
             if (car == null)
@@ -153,9 +144,10 @@ namespace DigitalTwin
             transform.position = origin;
             transform.rotation = Quaternion.identity;
 
-            // 初始截面覆盖「车尾 - 余量」到「车头 + 余量」
-            sMin = -(halfLength + endMargin);
-            sMax = halfLength + endMargin;
+            // 初始截面覆盖「车尾 - 余量」到「车头 + 余量」（以小车当前位置为中心）
+            float s0 = Vector3.Dot(car.position - origin, axisDir);
+            sMin = s0 - (halfLength + endMargin);
+            sMax = s0 + (halfLength + endMargin);
 
             points.Clear();
             int count = Mathf.Max(2, Mathf.CeilToInt((sMax - sMin) / sampleStep) + 1);
@@ -187,8 +179,12 @@ namespace DigitalTwin
             float s = Vector3.Dot(car.position - origin, axisDir);
             bool changed = false;
 
+            // 管道两端始终至少超出小车「半长 + 余量」，随小车移动连续延伸
+            float front = s + halfLength + endMargin;
+            float back = s - halfLength - endMargin;
+
             // 前进方向：在末端追加
-            while (points.Count < maxSegments && s + endMargin > sMax + sampleStep)
+            while (points.Count < maxSegments && front > sMax + sampleStep)
             {
                 sMax += sampleStep;
                 points.Add(axisDir * sMax);
@@ -196,7 +192,7 @@ namespace DigitalTwin
             }
 
             // 后退方向：在首端前插
-            while (points.Count < maxSegments && s - endMargin < sMin - sampleStep)
+            while (points.Count < maxSegments && back < sMin - sampleStep)
             {
                 sMin -= sampleStep;
                 points.Insert(0, axisDir * sMin);
@@ -559,21 +555,6 @@ namespace DigitalTwin
             r.y = 0f;
             Vector3 dir = f.sqrMagnitude >= r.sqrMagnitude ? f : r;
             return dir.sqrMagnitude < 1e-4f ? Vector3.forward : dir.normalized;
-        }
-
-        private void ResetMesh()
-        {
-            points.Clear();
-            verts.Clear();
-            norms.Clear();
-            uvs.Clear();
-            tris.Clear();
-            ClearTrail();
-
-            if (mesh != null)
-            {
-                mesh.Clear();
-            }
         }
 
         private Material CreateTransparentMaterial()

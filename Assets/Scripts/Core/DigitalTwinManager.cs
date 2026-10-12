@@ -1,4 +1,5 @@
 using UnityEngine;
+using DigitalTwin.Scripting;
 
 namespace DigitalTwin
 {
@@ -36,6 +37,7 @@ namespace DigitalTwin
         [SerializeField] private RobotControlSender robotControlSender;
         [SerializeField] private DynamicPipeModel dynamicPipeModel;
         [SerializeField] private PointCloudRebuilder pointCloudRebuilder;
+        [SerializeField] private ScriptRunner scriptRunner;
 
         public CarController Car => carController;
         public TelemetryCollector Telemetry => telemetry;
@@ -46,6 +48,7 @@ namespace DigitalTwin
         public RobotControlSender RobotControl => robotControlSender;
         public DynamicPipeModel DynamicPipe => dynamicPipeModel;
         public PointCloudRebuilder PointCloudRebuilder => pointCloudRebuilder;
+        public ScriptRunner ScriptRunner => scriptRunner;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -179,14 +182,21 @@ namespace DigitalTwin
             {
                 pointCloudRebuilder = gameObject.AddComponent<PointCloudRebuilder>();
             }
-            pointCloudRebuilder.Setup(robotDataReader, carTransform);
+            pointCloudRebuilder.Setup(robotDataReader, carTransform, carController);
+
+            scriptRunner = GetComponent<ScriptRunner>();
+            if (scriptRunner == null)
+            {
+                scriptRunner = gameObject.AddComponent<ScriptRunner>();
+            }
+            scriptRunner.Setup(carController, carTransform, cameraRotor, robotDataReader, pointCloudRebuilder, dynamicPipeModel);
 
             ui = GetComponent<DigitalTwinUI>();
             if (ui == null)
             {
                 ui = gameObject.AddComponent<DigitalTwinUI>();
             }
-            ui.Setup(carController, carTransform, client, cameraReceiver, cameraRotor, robotDataReader, dynamicPipeModel, pointCloudRebuilder);
+            ui.Setup(carController, carTransform, client, cameraReceiver, cameraRotor, robotDataReader, dynamicPipeModel, pointCloudRebuilder, scriptRunner);
 
             GameObject cube = GameObject.Find("Cube");
             if (cube != null && cube.GetComponent<RulerGenerator>() == null)
