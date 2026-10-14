@@ -19,7 +19,8 @@ namespace DigitalTwin
         private const int GearMax = 5;
         private const float RotorStep = 1f;
         private const float RotorMin = 0f;
-        private const float RotorMax = 360f;
+        // 自动巡航云台角速度上限（度/秒）
+        private const float RotorMax = 120f;
 
         private Mode currentMode = Mode.Manual;
         private Button manualBtn;

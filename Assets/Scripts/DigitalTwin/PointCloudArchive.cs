@@ -12,6 +12,7 @@ namespace DigitalTwin
         public float rangeDeg;    // 缺陷环向角宽
         public int markCount;     // 标红的截面数
         public int startSection;  // 缺陷起始截面索引
+        public string typeName;   // 缺陷类型（如「腐蚀」「划痕」）
         public readonly List<Texture2D> frames = new List<Texture2D>();
     }
 
@@ -35,6 +36,7 @@ namespace DigitalTwin
         public float rangeDeg;
         public int markCount;
         public int startSection;
+        public string typeName;   // 缺陷类型（如「腐蚀」「划痕」）
         public List<string> images = new List<string>(); // images/ 下的文件名
     }
 
@@ -206,7 +208,8 @@ namespace DigitalTwin
                             angleDeg = d.angleDeg,
                             rangeDeg = d.rangeDeg,
                             markCount = d.markCount,
-                            startSection = d.startSection
+                            startSection = d.startSection,
+                            typeName = d.typeName
                         };
 
                         for (int f = 0; f < d.frames.Count; f++)
@@ -282,7 +285,8 @@ namespace DigitalTwin
                         angleDeg = entry.angleDeg,
                         rangeDeg = entry.rangeDeg,
                         markCount = entry.markCount,
-                        startSection = entry.startSection
+                        startSection = entry.startSection,
+                        typeName = entry.typeName
                     };
 
                     foreach (string file in entry.images)

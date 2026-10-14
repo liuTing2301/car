@@ -30,6 +30,20 @@ namespace DigitalTwin
         [Tooltip("自动重建的时间间隔（秒）。")]
         [SerializeField] private float rebuildInterval = 0.2f;
 
+        [Header("轴向长度校正")]
+        [Tooltip("小车在场景中以虚拟速度移动（实际速度 × virtualSpeedRatio），直接按车位置建管会让管道长度被放大该倍数。\n" +
+                 "开启后按真实里程累积轴向位置，使重建的管道长度与实际里程一致。")]
+        [SerializeField] private bool useRealAxialDistance = true;
+
+        [Header("极坐标网格（在建模中显示，用于定位缺陷角度）")]
+        [Tooltip("是否随建模显示极坐标网格。0° 方位线为黄色（管道顶部），顺时针为正。")]
+        [SerializeField] private bool showPolarGrid = true;
+        [Tooltip("极坐标网格外径 = 截面半径 × 该比例。")]
+        [SerializeField] private float polarGridScale = 1.06f;
+
+        private GameObject polarGridObject;
+        private Transform polarGridTransform;
+
         // 累积的所有截面环（不丢弃，管道随时间变长）
         private readonly List<Vector3[]> sections = new List<Vector3[]>();
         private int sectionSize;
@@ -56,6 +70,13 @@ namespace DigitalTwin
         private bool sectionsDirty;
         // 是否接收实时雷达数据累积（读取本地存档时暂停，避免实时数据混入存档模型）
         private bool liveEnabled = true;
+
+        // 轴向累积（按真实里程推进，避免虚拟速度把小车的场景位移放大、把管道拉长）
+        private bool pipeFrameReady;
+        private Vector3 pipeOrigin;
+        private Vector3 pipeAxis = Vector3.forward;
+        private float pipeAdvance;
+        private Vector3 lastCarPos;
 
         /// <summary>已累积的截面环数量。</summary>
         public int SectionCount => sections.Count;
@@ -112,6 +133,8 @@ namespace DigitalTwin
 
         private void Update()
         {
+            UpdatePolarGrid();
+
             if (!autoRebuild || sections.Count < 2 || !sectionsDirty)
             {
                 return;
@@ -166,6 +189,9 @@ namespace DigitalTwin
             // 固定每截面点数：帧点数不足用 NaN 补齐、超出则截断，保证截面对齐且不重置
             Vector3[] section = new Vector3[sectionSize];
 
+            // 截面中心：按真实里程沿管道轴推进，避免虚拟速度把管道长度放大若干倍
+            Vector3 sectionOrigin = ComputeSectionOrigin();
+
             for (int i = 0; i < sectionSize; i++)
             {
                 if (i >= n)
@@ -184,7 +210,8 @@ namespace DigitalTwin
                 float rad = angles[i];
                 // 扫描平面垂直于小车前进方向（forward=Z），环在局部 XY 平面
                 Vector3 local = new Vector3(Mathf.Sin(rad) * dist, Mathf.Cos(rad) * dist, 0f) * pointScale;
-                section[i] = car.TransformPoint(local);
+                // 环中心用「按真实里程推进的截面中心」，环朝向沿用小车当前旋转
+                section[i] = sectionOrigin + car.rotation * local;
             }
 
             FillNaNs(section);
@@ -203,6 +230,37 @@ namespace DigitalTwin
             {
                 Debug.Log($"[PointCloudRebuilder] 已累积 {sections.Count} 截面");
             }
+        }
+
+        /// <summary>
+        /// 计算当前截面的中心：以首个截面为原点，沿管道轴向按「真实里程」推进。
+        /// 小车场景位移含 virtualSpeedRatio 倍率，除以该倍率还原真实里程，使管道长度与实际里程一致。
+        /// </summary>
+        private Vector3 ComputeSectionOrigin()
+        {
+            if (!pipeFrameReady)
+            {
+                pipeOrigin = car.position;
+                Vector3 f = car.forward; f.y = 0f;
+                Vector3 r = car.right; r.y = 0f;
+                Vector3 dir = f.sqrMagnitude >= r.sqrMagnitude ? f : r;
+                pipeAxis = dir.sqrMagnitude < 1e-4f ? Vector3.forward : dir.normalized;
+                pipeAdvance = 0f;
+                lastCarPos = car.position;
+                pipeFrameReady = true;
+                return pipeOrigin;
+            }
+
+            Vector3 step = car.position - lastCarPos;
+            step.y = 0f;
+            lastCarPos = car.position;
+
+            float ratio = (useRealAxialDistance && carController != null)
+                ? Mathf.Max(1f, carController.VirtualSpeedRatio)
+                : 1f;
+            pipeAdvance += Vector3.Dot(step, pipeAxis) / ratio;
+
+            return pipeOrigin + pipeAxis * pipeAdvance;
         }
 
         /// <summary>计算并记录一个截面环的中心、朝向与平均半径（缺陷定位用）。</summary>
@@ -303,7 +361,7 @@ namespace DigitalTwin
             for (int i = 0; i < sectionSize; i++)
             {
                 verts.Add(sec[i]);
-                colors.Add(new Color(0.2f, 0.8f, 1f, 0.6f));
+                colors.Add(new Color(0.32f, 0.86f, 1f, 1f)); // 亮青色不透明，保证预览清晰
             }
 
             if (s >= 1)
@@ -330,8 +388,8 @@ namespace DigitalTwin
             }
         }
 
-        /// <summary>把指定截面上、指定角度范围内的点标记为红色（用于缺陷标注）。</summary>
-        public void MarkDefectAt(int sectionIndex, float angleDeg, float rangeDeg)
+        /// <summary>把指定截面上、指定角度范围内的点标记为指定颜色（用于缺陷标注，按缺陷类型着色）。</summary>
+        public void MarkDefectAt(int sectionIndex, float angleDeg, float rangeDeg, Color color)
         {
             if (sectionSize <= 0 || sections.Count == 0)
             {
@@ -352,7 +410,7 @@ namespace DigitalTwin
                 int vertIdx = sectionIndex * sectionSize + idx;
                 if (vertIdx < colors.Count)
                 {
-                    colors[vertIdx] = new Color(1f, 0.05f, 0.05f, 1f);
+                    colors[vertIdx] = color;
                 }
             }
 
@@ -407,6 +465,8 @@ namespace DigitalTwin
             hasResult = false;
             hasRebuilt = false;
             sectionsDirty = false;
+            pipeFrameReady = false;
+            pipeAdvance = 0f;
             if (mesh != null)
             {
                 mesh.Clear();
@@ -480,6 +540,131 @@ namespace DigitalTwin
             processedSections = 0;
             Mesh m = Rebuild();
             return m != null;
+        }
+
+        // ===================== 极坐标网格（建模内） =====================
+        /// <summary>把极坐标网格对齐到最新截面：位置/朝向取该截面，半径取该截面半径。</summary>
+        private void UpdatePolarGrid()
+        {
+            int count = sections.Count;
+            if (!showPolarGrid || count == 0 || sectionCenters.Count < count || sectionRotations.Count < count)
+            {
+                if (polarGridObject != null && polarGridObject.activeSelf)
+                {
+                    polarGridObject.SetActive(false);
+                }
+                return;
+            }
+
+            EnsurePolarGrid();
+
+            int idx = count - 1;
+            float r = sectionRadii.Count > idx && sectionRadii[idx] > 0f
+                ? sectionRadii[idx]
+                : Mathf.Max(0.05f, avgRadius);
+
+            polarGridTransform.position = sectionCenters[idx];
+            polarGridTransform.rotation = sectionRotations[idx];
+            float s = r * Mathf.Max(0.5f, polarGridScale);
+            polarGridTransform.localScale = new Vector3(s, s, s);
+
+            if (!polarGridObject.activeSelf)
+            {
+                polarGridObject.SetActive(true);
+            }
+        }
+
+        private void EnsurePolarGrid()
+        {
+            if (polarGridObject != null)
+            {
+                return;
+            }
+
+            polarGridObject = new GameObject("PolarGrid");
+            polarGridObject.layer = resultLayer;
+            polarGridObject.transform.SetParent(null, false);
+            polarGridTransform = polarGridObject.transform;
+
+            Shader shader = Shader.Find("Sprites/Default");
+            if (shader == null)
+            {
+                shader = Shader.Find("Unlit/Color");
+            }
+            Material mat = new Material(shader);
+            mat.color = Color.white;
+
+            Color ringColor = new Color(0.45f, 0.80f, 1f, 0.55f);
+            Color outerColor = new Color(0.60f, 0.95f, 1f, 0.90f);
+            Color spokeColor = new Color(0.45f, 0.80f, 1f, 0.35f);
+            Color zeroColor = new Color(1f, 0.95f, 0.30f, 0.95f); // 0° 方位线：黄色
+
+            const int rings = 4;
+            for (int i = 1; i <= rings; i++)
+            {
+                AddPolarCircle(i / (float)rings, i == rings ? outerColor : ringColor, mat);
+            }
+
+            const int spokes = 12;
+            for (int k = 0; k < spokes; k++)
+            {
+                bool isZero = k == 0;
+                AddPolarSpoke(k * (360f / spokes), isZero ? zeroColor : spokeColor, mat, isZero);
+            }
+        }
+
+        /// <summary>在网格局部 XY 平面画一个圆（单位半径，缩放由父物体承担）。</summary>
+        private void AddPolarCircle(float rNorm, Color color, Material mat)
+        {
+            GameObject go = new GameObject("PolarRing");
+            go.layer = resultLayer;
+            go.transform.SetParent(polarGridTransform, false);
+
+            LineRenderer lr = go.AddComponent<LineRenderer>();
+            lr.material = mat;
+            lr.useWorldSpace = false;
+            lr.loop = true;
+            lr.positionCount = 96;
+            lr.startWidth = 0.03f;
+            lr.endWidth = 0.03f;
+            lr.startColor = color;
+            lr.endColor = color;
+            lr.numCapVertices = 0;
+            lr.numCornerVertices = 0;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+
+            for (int i = 0; i < 96; i++)
+            {
+                float a = i / 96f * Mathf.PI * 2f;
+                lr.SetPosition(i, new Vector3(Mathf.Sin(a), Mathf.Cos(a), 0f) * rNorm);
+            }
+        }
+
+        /// <summary>从圆心画一条方位线（角度 0° 指向局部 +Y，顺时针为正）。</summary>
+        private void AddPolarSpoke(float angleDeg, Color color, Material mat, bool emphasize)
+        {
+            GameObject go = new GameObject("PolarSpoke");
+            go.layer = resultLayer;
+            go.transform.SetParent(polarGridTransform, false);
+
+            LineRenderer lr = go.AddComponent<LineRenderer>();
+            lr.material = mat;
+            lr.useWorldSpace = false;
+            lr.positionCount = 2;
+            float width = emphasize ? 0.05f : 0.02f;
+            lr.startWidth = width;
+            lr.endWidth = width;
+            lr.startColor = color;
+            lr.endColor = color;
+            lr.numCapVertices = 0;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            lr.receiveShadows = false;
+
+            float rad = angleDeg * Mathf.Deg2Rad;
+            Vector3 dir = new Vector3(Mathf.Sin(rad), Mathf.Cos(rad), 0f);
+            lr.SetPosition(0, Vector3.zero);
+            lr.SetPosition(1, dir);
         }
 
         private Material CreateMaterial()
