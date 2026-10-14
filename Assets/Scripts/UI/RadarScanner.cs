@@ -50,7 +50,7 @@ namespace DigitalTwin
             // 构建时布局可能未计算，给一个保底尺寸
             if (pw <= 1f) pw = 280f;
             if (ph <= 1f) ph = 280f;
-            float size = Mathf.Min(pw, ph) * 0.7f;
+            float size = Mathf.Min(pw, ph) * 0.5f;
 
             // 雷达盘容器
             GameObject diskGO = new GameObject("RadarDisk", typeof(RectTransform), typeof(Image));

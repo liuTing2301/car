@@ -19,6 +19,8 @@ namespace DigitalTwin
         [Header("管道尺寸")]
         [Tooltip("管壁相对小车外轮廓的放大系数（1 表示刚好贴住外轮廓）。")]
         [SerializeField] private float fitScale = 1.00f;
+        [Tooltip("管壁厚度 = 管道半径 × 该比例（数值越大管壁越厚）。厚度朝外生长，内壁始终贴合小车。")]
+        [SerializeField] private float wallThicknessRatio = 0.14f;
         [Tooltip("自动测量尺寸的校正系数。部分模型自带远大于车身的部件（底座/环境等）会把包围盒撑大，用它把尺寸拉回车身实际大小。")]
         [SerializeField] private float sizeScale = 0.092f;
         [Tooltip("管道两端超出小车的余量 = 管道半径 × 该比例。")]
@@ -33,8 +35,12 @@ namespace DigitalTwin
         [SerializeField] private int radialSegments = 32;
 
         [Header("外观")]
-        [Tooltip("管道颜色（半透明）。")]
-        [SerializeField] private Color pipeColor = new Color(0.12f, 0.55f, 1f, 0.28f);
+        [Tooltip("外壁颜色：透明度越高越像实心（仍保留可看进管道）。")]
+        [SerializeField] private Color pipeColor = new Color(0.16f, 0.58f, 1f, 0.45f);
+        [Tooltip("内壁颜色：内壁挡在小车前面，需较透，才能看到管道内的小车 / 车轮痕迹。")]
+        [SerializeField] private Color innerColor = new Color(0.06f, 0.30f, 0.62f, 0.30f);
+        [Tooltip("两端端面（管壁截面）颜色，默认与侧壁一致，让它看起来就是同一圈管壁。")]
+        [SerializeField] private Color endColor = new Color(0.16f, 0.58f, 1f, 0.45f);
 
         // ===== 车轮痕迹（车轮筛选与网格地板一致）=====
         [Header("车轮痕迹")]
@@ -52,7 +58,8 @@ namespace DigitalTwin
         private readonly List<Vector3> verts = new List<Vector3>();
         private readonly List<Vector3> norms = new List<Vector3>();
         private readonly List<Vector2> uvs = new List<Vector2>();
-        private readonly List<int> tris = new List<int>();
+        private readonly List<int> trisOuter = new List<int>();   // submesh 0：外壁
+        private readonly List<int> trisInner = new List<int>();   // submesh 1：内壁
 
         // 痕迹网格
         private readonly List<Vector3> trailVerts = new List<Vector3>();
@@ -61,6 +68,11 @@ namespace DigitalTwin
 
         private MeshFilter meshFilter;
         private Mesh mesh;
+        private Material pipeMaterialOuter;
+        private Material pipeMaterialInner;
+        private Material pipeMaterialEnd;
+        private Mesh endStartMesh;   // 起始端端面环
+        private Mesh endEndMesh;     // 末端端面环
         private MeshFilter trailMeshFilter;
         private Mesh trailMesh;
 
@@ -76,6 +88,7 @@ namespace DigitalTwin
 
         // 由小车外形推算出的尺寸
         private float pipeRadius = 1f;
+        private float wallThickness = 0.1f;  // 管壁厚度
         private float halfLength;        // 小车沿轴向的半长
         private float halfHeight;        // 小车截面内的半高
         private float endMargin;         // 管道两端超出小车的余量
@@ -100,7 +113,14 @@ namespace DigitalTwin
         {
             meshFilter = gameObject.AddComponent<MeshFilter>();
             MeshRenderer mr = gameObject.AddComponent<MeshRenderer>();
-            mr.material = CreateTransparentMaterial();
+            pipeMaterialOuter = CreateTransparentMaterial(pipeColor);
+            pipeMaterialInner = CreateTransparentMaterial(innerColor);
+            pipeMaterialEnd = CreateEndMaterial(endColor);
+            mr.sharedMaterials = new[] { pipeMaterialOuter, pipeMaterialInner };
+
+            // 两端端面环：独立物体，保证从任何角度看管壁厚度都可见
+            endStartMesh = CreateEndRingObject("PipeEndStart");
+            endEndMesh = CreateEndRingObject("PipeEndEnd");
 
             mesh = new Mesh();
             mesh.MarkDynamic();
@@ -268,6 +288,7 @@ namespace DigitalTwin
             halfLength *= k;
 
             pipeRadius = Mathf.Max(0.05f, Mathf.Max(halfWidth, halfHeight) * Mathf.Max(1f, fitScale));
+            wallThickness = Mathf.Clamp(pipeRadius * wallThicknessRatio, pipeRadius * 0.02f, pipeRadius * 0.45f);
             endMargin = pipeRadius * Mathf.Max(0.05f, endMarginRatio);
             sampleStep = Mathf.Max(0.05f, pipeRadius * Mathf.Max(0.05f, sampleStepRatio));
             trailWidth = Mathf.Max(0.001f, pipeRadius * Mathf.Max(0.001f, trailWidthRatio));
@@ -352,41 +373,66 @@ namespace DigitalTwin
             if (n < 2)
             {
                 mesh.Clear();
+                ClearEndRings();
                 return;
             }
 
             verts.Clear();
             norms.Clear();
             uvs.Clear();
-            tris.Clear();
+            trisOuter.Clear();
+            trisInner.Clear();
 
+            // 厚度朝外：内壁钉在贴合小车的半径上，外壁 = 内壁 + 壁厚（小车始终在管道内）
+            float innerRadius = Mathf.Max(0.001f, pipeRadius);
+            float outerRadius = innerRadius + wallThickness;
+            int ring = radialSegments * 2; // 每圈：外壁 R 点 + 内壁 R 点
+
+            // 外壁（法线朝外）与内壁（法线朝内）
             for (int i = 0; i < n; i++)
             {
                 for (int j = 0; j < radialSegments; j++)
                 {
                     float angle = (float)j / radialSegments * Mathf.PI * 2f;
                     Vector3 dir = ringRight * Mathf.Cos(angle) + ringUp * Mathf.Sin(angle);
-                    verts.Add(points[i] + dir * pipeRadius);
-                    norms.Add(dir);   // 圆管法线即径向，无需 RecalculateNormals
+                    verts.Add(points[i] + dir * outerRadius);
+                    norms.Add(dir);
+                    uvs.Add(new Vector2((float)j / radialSegments, i * 0.05f));
+                }
+                for (int j = 0; j < radialSegments; j++)
+                {
+                    float angle = (float)j / radialSegments * Mathf.PI * 2f;
+                    Vector3 dir = ringRight * Mathf.Cos(angle) + ringUp * Mathf.Sin(angle);
+                    verts.Add(points[i] + dir * innerRadius);
+                    norms.Add(-dir);
                     uvs.Add(new Vector2((float)j / radialSegments, i * 0.05f));
                 }
             }
 
+            // 侧壁三角带（外壁 + 内壁，内壁反向绕序）
             for (int i = 0; i < n - 1; i++)
             {
                 for (int j = 0; j < radialSegments; j++)
                 {
                     int jn = (j + 1) % radialSegments;
-                    int a = i * radialSegments + j;
-                    int b = i * radialSegments + jn;
-                    int c = (i + 1) * radialSegments + j;
-                    int d = (i + 1) * radialSegments + jn;
 
-                    tris.Add(a); tris.Add(c); tris.Add(b);
-                    tris.Add(b); tris.Add(c); tris.Add(d);
+                    int oa = i * ring + j;
+                    int ob = i * ring + jn;
+                    int oc = (i + 1) * ring + j;
+                    int od = (i + 1) * ring + jn;
+                    trisOuter.Add(oa); trisOuter.Add(oc); trisOuter.Add(ob);
+                    trisOuter.Add(ob); trisOuter.Add(oc); trisOuter.Add(od);
+
+                    int ia = i * ring + radialSegments + j;
+                    int ib = i * ring + radialSegments + jn;
+                    int ic = (i + 1) * ring + radialSegments + j;
+                    int id = (i + 1) * ring + radialSegments + jn;
+                    trisInner.Add(ia); trisInner.Add(ib); trisInner.Add(ic);
+                    trisInner.Add(ib); trisInner.Add(id); trisInner.Add(ic);
                 }
             }
 
+            // 两端端面环由独立物体渲染（见 BuildEndRing），这里只做管壁
             mesh.Clear();
             if (verts.Count > 65535)
             {
@@ -395,8 +441,94 @@ namespace DigitalTwin
             mesh.SetVertices(verts);
             mesh.SetNormals(norms);
             mesh.SetUVs(0, uvs);
-            mesh.SetTriangles(tris, 0);
+            mesh.subMeshCount = 2;
+            mesh.SetTriangles(trisOuter, 0);
+            mesh.SetTriangles(trisInner, 1);
             mesh.RecalculateBounds();
+
+            // 端面环：不透明 + 无光照 + 双面，任何角度（尤其正对端面）都能看见管壁厚度
+            BuildEndRing(endStartMesh, points[0]);
+            BuildEndRing(endEndMesh, points[n - 1]);
+        }
+
+        /// <summary>构建一个端面环（圆环，双面）网格——独立物体渲染，保证正对端面时也可见。</summary>
+        private void BuildEndRing(Mesh m, Vector3 center)
+        {
+            if (m == null)
+            {
+                return;
+            }
+
+            int rs = Mathf.Max(3, radialSegments);
+            float rIn = Mathf.Max(0.001f, pipeRadius);
+            float rOut = rIn + wallThickness;
+
+            List<Vector3> v = new List<Vector3>(rs * 2);
+            List<int> t = new List<int>(rs * 12);
+            for (int j = 0; j < rs; j++)
+            {
+                float a = (float)j / rs * Mathf.PI * 2f;
+                Vector3 dir = ringRight * Mathf.Cos(a) + ringUp * Mathf.Sin(a);
+                v.Add(center + dir * rOut);
+            }
+            for (int j = 0; j < rs; j++)
+            {
+                float a = (float)j / rs * Mathf.PI * 2f;
+                Vector3 dir = ringRight * Mathf.Cos(a) + ringUp * Mathf.Sin(a);
+                v.Add(center + dir * rIn);
+            }
+            for (int j = 0; j < rs; j++)
+            {
+                int jn = (j + 1) % rs;
+                int o = j, on = jn, i0 = rs + j, i1 = rs + jn;
+                // 正面
+                t.Add(o); t.Add(i0); t.Add(on);
+                t.Add(on); t.Add(i0); t.Add(i1);
+                // 背面（双面，从任意方向都可见）
+                t.Add(o); t.Add(on); t.Add(i0);
+                t.Add(on); t.Add(i1); t.Add(i0);
+            }
+
+            Color32[] cols = new Color32[v.Count];
+            for (int i = 0; i < cols.Length; i++)
+            {
+                cols[i] = new Color32(255, 255, 255, 255); // Sprites/Default 取顶点色，需给白色避免渲染成黑
+            }
+
+            m.Clear();
+            m.SetVertices(v);
+            m.SetColors(cols);
+            m.SetTriangles(t, 0);
+            m.RecalculateBounds();
+        }
+
+        private void ClearEndRings()
+        {
+            if (endStartMesh != null)
+            {
+                endStartMesh.Clear();
+            }
+            if (endEndMesh != null)
+            {
+                endEndMesh.Clear();
+            }
+        }
+
+        /// <summary>创建一个端面环物体（自带 MeshFilter / MeshRenderer）。</summary>
+        private Mesh CreateEndRingObject(string name)
+        {
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(transform, false);
+            MeshFilter mf = go.AddComponent<MeshFilter>();
+            MeshRenderer mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = pipeMaterialEnd;
+            mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+
+            Mesh m = new Mesh();
+            m.MarkDynamic();
+            mf.sharedMesh = m;
+            return m;
         }
 
         // ===================== 车轮痕迹（沿管壁的细带状） =====================
@@ -557,7 +689,7 @@ namespace DigitalTwin
             return dir.sqrMagnitude < 1e-4f ? Vector3.forward : dir.normalized;
         }
 
-        private Material CreateTransparentMaterial()
+        private Material CreateTransparentMaterial(Color color)
         {
             Shader shader = Shader.Find("Standard");
             if (shader == null)
@@ -566,7 +698,7 @@ namespace DigitalTwin
             }
 
             Material mat = new Material(shader);
-            mat.color = pipeColor;
+            mat.color = color;
 
             mat.SetFloat("_Mode", 3f);
             mat.SetOverrideTag("RenderType", "Transparent");
@@ -578,6 +710,33 @@ namespace DigitalTwin
             mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
             mat.renderQueue = 3000;
             mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+            return mat;
+        }
+
+        /// <summary>
+        /// 端面材质：无光照（Unlit）+ 透明，观感与侧壁一致。
+        /// 端面法线沿管道轴向，若用受光材质，正对端面看时会发暗而“消失”；无光照可保证任何角度都看得见，
+        /// 同时颜色/透明度与侧壁相同，不会有突兀的亮色。
+        /// </summary>
+        private Material CreateEndMaterial(Color color)
+        {
+            Shader shader = Shader.Find("Sprites/Default");
+            if (shader == null)
+            {
+                shader = Shader.Find("Unlit/Transparent");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Unlit/Color");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Standard");
+            }
+
+            Material mat = new Material(shader);
+            mat.color = color;
+            mat.renderQueue = 3001; // 与侧壁同层，略后绘制
             return mat;
         }
 

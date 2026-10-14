@@ -26,10 +26,15 @@ namespace DigitalTwin
         [SerializeField] private float defaultDistance = 10f;
         [SerializeField] private float initialPitch = 20f;
 
+        [Header("取景偏移")]
+        [Tooltip("把小车在屏幕上整体上移的比例（0 = 居中）。给中栏底部「缺陷检测结果」预览框让出空间，避免遮挡小车。")]
+        [SerializeField] private float framingOffsetUp = 0.10f;
+
         private float yaw;
         private float pitch;
         private float distance;
         private bool initialized;
+        private Camera cam;
 
         public void Setup(Transform target)
         {
@@ -39,6 +44,7 @@ namespace DigitalTwin
 
         private void Initialize()
         {
+            cam = GetComponent<Camera>();
             distance = defaultDistance;
             yaw = 0f;
             pitch = initialPitch;
@@ -98,8 +104,19 @@ namespace DigitalTwin
 
             Vector3 visualCenter = target.position;
             Quaternion rotation = Quaternion.Euler(pitch, yaw, 0f);
-            transform.position = visualCenter - rotation * Vector3.forward * distance;
-            transform.rotation = Quaternion.LookRotation(visualCenter - transform.position);
+
+            // 取景上移：让小车在屏幕上整体抬高，给底部「缺陷检测结果」预览框让出空间
+            float offsetWorld = 0f;
+            if (framingOffsetUp > 0.0001f)
+            {
+                float fov = cam != null ? cam.fieldOfView : 60f;
+                float visibleHeight = 2f * distance * Mathf.Tan(fov * 0.5f * Mathf.Deg2Rad);
+                offsetWorld = visibleHeight * framingOffsetUp;
+            }
+            Vector3 lookPoint = visualCenter - rotation * Vector3.up * offsetWorld;
+
+            transform.position = lookPoint - rotation * Vector3.forward * distance;
+            transform.rotation = Quaternion.LookRotation(lookPoint - transform.position);
         }
     }
 }

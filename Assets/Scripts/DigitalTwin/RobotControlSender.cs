@@ -17,10 +17,28 @@ namespace DigitalTwin
         [Tooltip("发送间隔（秒），默认 0.05s = 20Hz。")]
         [SerializeField] private float interval = 0.05f;
 
-        [Tooltip("摄像头电机最大转速（度/秒），对应占空比 1。下发的 camera_motor_speed 为 转速/该值。")]
-        [SerializeField] private float cameraMotorMaxSpeed = 120f;
+        [Header("摄像头电机（云台）转速 ↔ 占空比")]
+        [Tooltip("线性回归：角速度 y = slope × d + intercept（y 单位度/秒，d 为占空比）。")]
+        [SerializeField] private float cameraMotorSpeedSlope = 542.7f;
+        [SerializeField] private float cameraMotorSpeedIntercept = -52.97f;
+        [Tooltip("最大占空比（回归方程适用范围上限，d ∈ [0, 该值]）。")]
+        [SerializeField] private float cameraMotorMaxDuty = 0.7f;
 
         private float timer;
+
+        /// <summary>角速度（度/秒，带符号）→ 占空比：回归方程反解 d = (|y| - intercept) / slope，范围 [-maxDuty, maxDuty]。</summary>
+        public float SpeedToDuty(float speed)
+        {
+            float mag = Mathf.Abs(speed);
+            if (mag <= 0.01f || Mathf.Abs(cameraMotorSpeedSlope) < 1e-4f)
+            {
+                return 0f;
+            }
+
+            float duty = (mag - cameraMotorSpeedIntercept) / cameraMotorSpeedSlope;
+            duty = Mathf.Clamp(duty, 0f, cameraMotorMaxDuty);
+            return Mathf.Sign(speed) * duty;
+        }
 
         public void Setup(RobotDataReader reader, CarController car, CameraRotor cameraRotor)
         {
@@ -61,7 +79,7 @@ namespace DigitalTwin
             }
 
             // 摄像头电机：手动按 Q（正转）/ E（反转）用手动转速，自动巡航环扫用自动转速，否则停转。
-            // 下发的是占空比（转速 / 最大转速），正负号表示转向，范围 -1 ~ 1；120°/s 对应占空比 1。
+            // 下发的是占空比：按实测回归 y = 542.7d - 52.97 反解 d = (速度 + 52.97) / 542.7，正负号表示转向，范围 ±0.7。
             if (cameraRotor != null)
             {
                 float speed = 0f;
@@ -76,7 +94,7 @@ namespace DigitalTwin
                     speed = cameraRotor.CurrentManualRotateSpeed;
                 }
 
-                pkt.camera_motor_speed = Mathf.Clamp(speed / cameraMotorMaxSpeed, -1f, 1f);
+                pkt.camera_motor_speed = SpeedToDuty(speed);
             }
 
             robotDataReader.SendControl(pkt);
