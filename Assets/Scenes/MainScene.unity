@@ -163,16 +163,28 @@ PrefabInstance:
     m_TransformParent: {fileID: 71280145}
     m_Modifications:
     - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
       propertyPath: m_LocalPosition.x
       value: -5876.6016
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -69698.48
+      value: -77084
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -97445.56
+      value: -91655
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 4a293ec366ab03e46bbe5403a2f158f8, type: 3}
       propertyPath: m_LocalRotation.w
@@ -431,6 +443,11 @@ MonoBehaviour:
   distanceFactor: 1.6
   defaultDistance: 8000
   initialPitch: 20
+  framingOffsetUp: 0.1
+  showcaseDistanceFactor: 0.1
+  showcasePitch: 20
+  showcaseZoomLerp: 2.5
+  showcaseYawSpeed: 12
 --- !u!1001 &1947345616
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -733,6 +750,7 @@ MonoBehaviour:
   robotControlSender: {fileID: 0}
   dynamicPipeModel: {fileID: 0}
   pointCloudRebuilder: {fileID: 0}
+  scriptRunner: {fileID: 0}
 --- !u!114 &2068761614
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -762,10 +780,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   robotDataReader: {fileID: 0}
   car: {fileID: 2068761605}
+  carController: {fileID: 0}
   pointScale: 100
   resultLayer: 31
+  minSpeedToRebuild: 0.01
   autoRebuild: 1
   rebuildInterval: 0.5
+  useRealAxialDistance: 1
+  showPolarGrid: 1
+  polarGridScale: 1.06
 --- !u!114 &2068761616
 MonoBehaviour:
   m_ObjectHideFlags: 0

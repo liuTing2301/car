@@ -72,6 +72,9 @@ namespace DigitalTwin
         private float previewYaw = 45f;
         private float previewPitch = 25f;
         private bool previewInited;
+        private bool previewManualFraming;      // 用户手动平移 / 缩放后，不再自动重新取景
+        private Vector3 previewFramedCenter;    // 上次自动取景时的模型中心
+        private float previewFramedRadius = 1f; // 上次自动取景时的包围球半径
 
         [Header("缺陷标注")]
         [SerializeField] private float cameraFov = 60f;
@@ -114,13 +117,13 @@ namespace DigitalTwin
         private DataChart confidenceChart;
         private DataChart radiusChart;
         private Text deviationValueText;
-        private Text ellipticityValueText;
         private Text confidenceValueText;
         private Text radiusValueText;
-        private Text mainDeviationText;
         private Text mainEllipticityText;
-        private Text mainConfidenceText;
-        private Text mainRadiusText;
+
+        // 左下角缺陷图片列表（实时显示所有缺陷图片，无需打开重建窗口）
+        private RectTransform defectThumbContainer;
+        private Text defectThumbEmptyText;
 
         private float radarMockTimer;
         private bool pointCloudActive;
@@ -260,10 +263,23 @@ namespace DigitalTwin
             BuildQuitConfirm();
             WireCamera();
             WireRobotData();
+            BuildLoginScreen();
+        }
+
+        /// <summary>启动登录界面：隐藏主界面，背景用虚化的 3D 画面。</summary>
+        private void BuildLoginScreen()
+        {
+            LoginScreen.Create(canvas.gameObject, Camera.main, null);
         }
 
         private void Update()
         {
+            // 登录界面显示时暂停主界面刷新（此时主界面是隐藏的）
+            if (LoginScreen.IsOpen)
+            {
+                return;
+            }
+
             UpdateClock();
             UpdateTelemetry();
             UpdateStatus();
@@ -720,7 +736,7 @@ namespace DigitalTwin
             FillRect(markIcon);
 
             // 标题 / 副标题
-            Text title = UIFactory.CreateText(bar, "Title", "管道缺陷检测小车", 18, UIFactory.TextPrimary, TextAnchor.LowerLeft, FontStyle.Bold);
+            Text title = UIFactory.CreateText(bar, "Title", "管道缺陷检测机器人", 18, UIFactory.TextPrimary, TextAnchor.LowerLeft, FontStyle.Bold);
             RectTransform tRT = title.GetComponent<RectTransform>();
             tRT.anchorMin = new Vector2(0, 0.5f);
             tRT.anchorMax = new Vector2(0, 1);
@@ -958,6 +974,67 @@ namespace DigitalTwin
 
             scriptOutputScroll.viewport = outVpRT;
             scriptOutputScroll.content = sotRT;
+
+            // ---- 缺陷检测图片列表（左下角常驻，横向滚动显示所有缺陷图片）----
+            RectTransform thumbPanel = UIFactory.CreatePanel(content, "DefectThumbPanel", UIFactory.BgDark, UIFactory.BorderDim);
+            thumbPanel.anchorMin = new Vector2(0, 0);
+            thumbPanel.anchorMax = new Vector2(1, 0);
+            thumbPanel.pivot = new Vector2(0.5f, 0);
+            thumbPanel.anchoredPosition = Vector2.zero;
+            thumbPanel.sizeDelta = new Vector2(0, 118);
+
+            GameObject thumbScrollGO = new GameObject("DefectThumbScroll", typeof(RectTransform), typeof(ScrollRect));
+            thumbScrollGO.transform.SetParent(thumbPanel, false);
+            RectTransform tsRT = thumbScrollGO.GetComponent<RectTransform>();
+            tsRT.anchorMin = Vector2.zero;
+            tsRT.anchorMax = Vector2.one;
+            tsRT.offsetMin = new Vector2(8, 8);
+            tsRT.offsetMax = new Vector2(-8, -8);
+            ScrollRect thumbScroll = thumbScrollGO.GetComponent<ScrollRect>();
+            thumbScroll.horizontal = true;
+            thumbScroll.vertical = false;
+            thumbScroll.movementType = ScrollRect.MovementType.Clamped;
+            thumbScroll.scrollSensitivity = 20f;
+
+            GameObject thumbVpGO = new GameObject("Viewport", typeof(RectTransform), typeof(RectMask2D));
+            thumbVpGO.transform.SetParent(thumbScrollGO.transform, false);
+            RectTransform tvpRT = thumbVpGO.GetComponent<RectTransform>();
+            tvpRT.anchorMin = Vector2.zero;
+            tvpRT.anchorMax = Vector2.one;
+            tvpRT.offsetMin = Vector2.zero;
+            tvpRT.offsetMax = Vector2.zero;
+
+            GameObject thumbContentGO = new GameObject("Content", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
+            thumbContentGO.transform.SetParent(thumbVpGO.transform, false);
+            defectThumbContainer = thumbContentGO.GetComponent<RectTransform>();
+            defectThumbContainer.anchorMin = new Vector2(0, 0.5f);
+            defectThumbContainer.anchorMax = new Vector2(0, 0.5f);
+            defectThumbContainer.pivot = new Vector2(0, 0.5f);
+            defectThumbContainer.anchoredPosition = Vector2.zero;
+            defectThumbContainer.sizeDelta = new Vector2(0f, 94f);
+
+            HorizontalLayoutGroup thumbHlg = thumbContentGO.GetComponent<HorizontalLayoutGroup>();
+            thumbHlg.spacing = 6f;
+            thumbHlg.childAlignment = TextAnchor.MiddleLeft;
+            thumbHlg.childForceExpandWidth = false;
+            thumbHlg.childForceExpandHeight = false;
+            thumbHlg.childControlWidth = true;
+            thumbHlg.childControlHeight = true;
+
+            ContentSizeFitter thumbCsf = thumbContentGO.GetComponent<ContentSizeFitter>();
+            thumbCsf.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            thumbCsf.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+
+            thumbScroll.viewport = tvpRT;
+            thumbScroll.content = defectThumbContainer;
+
+            defectThumbEmptyText = UIFactory.CreateText(thumbPanel, "DefectThumbEmpty", "暂无缺陷图片", 12,
+                UIFactory.TextDim, TextAnchor.MiddleLeft);
+            RectTransform dteRT = defectThumbEmptyText.GetComponent<RectTransform>();
+            dteRT.anchorMin = Vector2.zero;
+            dteRT.anchorMax = Vector2.one;
+            dteRT.offsetMin = new Vector2(14, 0);
+            dteRT.offsetMax = new Vector2(-8, 0);
         }
 
         /// <summary>把「行驶状态」（速度 / 里程 / 状态 + 两条曲线）追加到驾驶模式模块容器内。</summary>
@@ -1256,58 +1333,44 @@ namespace DigitalTwin
             }
         }
 
-        /// <summary>右侧栏「检测数据」面板：2×2 指标 + 数据曲线按钮。</summary>
+        /// <summary>右侧栏「检测数据」面板：只显示椭圆度（数值 + 曲线），其余数据在「更多数据」窗口中查看。</summary>
         private void BuildDataPanel(RectTransform body)
         {
-            GameObject gridGO = new GameObject("DataGrid", typeof(RectTransform));
-            gridGO.transform.SetParent(body, false);
-            RectTransform grid = gridGO.GetComponent<RectTransform>();
-            grid.anchorMin = Vector2.zero;
-            grid.anchorMax = Vector2.one;
-            grid.offsetMin = new Vector2(0, 40);
-            grid.offsetMax = Vector2.zero;
+            // 左：椭圆度数值
+            Text ellLabel = UIFactory.CreateText(body, "EllipseLabel", "椭圆度", 12, UIFactory.TextDim, TextAnchor.LowerLeft);
+            RectTransform elRT = ellLabel.GetComponent<RectTransform>();
+            elRT.anchorMin = new Vector2(0f, 0.58f);
+            elRT.anchorMax = new Vector2(0.34f, 1f);
+            elRT.offsetMin = Vector2.zero;
+            elRT.offsetMax = Vector2.zero;
 
-            mainDeviationText = CreateMetricCell(grid, "偏差", UIFactory.AccentCyan, 0, 0);
-            mainEllipticityText = CreateMetricCell(grid, "椭圆度", UIFactory.AccentGreen, 1, 0);
-            mainConfidenceText = CreateMetricCell(grid, "置信度", UIFactory.AccentOrange, 0, 1);
-            mainRadiusText = CreateMetricCell(grid, "半径", UIFactory.AccentPurple, 1, 1);
+            mainEllipticityText = UIFactory.CreateText(body, "EllipseValue", "0.00", 26, UIFactory.AccentGreen, TextAnchor.UpperLeft);
+            RectTransform evRT = mainEllipticityText.GetComponent<RectTransform>();
+            evRT.anchorMin = new Vector2(0f, 0.14f);
+            evRT.anchorMax = new Vector2(0.34f, 0.62f);
+            evRT.offsetMin = Vector2.zero;
+            evRT.offsetMax = Vector2.zero;
 
-            Button chartBtn = UIFactory.CreateButton(body, "ChartBtn", "数据曲线", 13);
-            RectTransform cbRT = chartBtn.GetComponent<RectTransform>();
-            cbRT.anchorMin = new Vector2(1, 0);
-            cbRT.anchorMax = new Vector2(1, 0);
-            cbRT.pivot = new Vector2(1, 0);
-            cbRT.anchoredPosition = new Vector2(0, 2);
-            cbRT.sizeDelta = new Vector2(120, 34);
-            chartBtn.onClick.AddListener(ShowChartPanel);
-        }
+            // 右：椭圆度数据曲线（紧挨着数值）
+            GameObject chartGO = new GameObject("EllipseChart", typeof(RectTransform), typeof(RawImage));
+            chartGO.transform.SetParent(body, false);
+            RectTransform chRT = chartGO.GetComponent<RectTransform>();
+            chRT.anchorMin = new Vector2(0.36f, 0.18f);
+            chRT.anchorMax = new Vector2(1f, 1f);
+            chRT.offsetMin = Vector2.zero;
+            chRT.offsetMax = Vector2.zero;
+            ellipticityChart = gameObject.AddComponent<DataChart>();
+            ellipticityChart.Build(chRT, UIFactory.AccentGreen, -1f);
 
-        /// <summary>2×2 网格里的单个指标（标签 + 数值），col 左/右，row 0 上 1 下。</summary>
-        private Text CreateMetricCell(RectTransform parent, string label, Color color, int col, int row)
-        {
-            GameObject go = new GameObject("Cell_" + label, typeof(RectTransform));
-            go.transform.SetParent(parent, false);
-            RectTransform rt = go.GetComponent<RectTransform>();
-            rt.anchorMin = new Vector2(col * 0.5f, row == 0 ? 0.5f : 0f);
-            rt.anchorMax = new Vector2((col + 1) * 0.5f, row == 0 ? 1f : 0.5f);
-            rt.offsetMin = new Vector2(6, 4);
-            rt.offsetMax = new Vector2(-6, -4);
-
-            Text lab = UIFactory.CreateText(go.transform, "Label", label, 11, UIFactory.TextDim, TextAnchor.LowerLeft);
-            RectTransform labRT = lab.GetComponent<RectTransform>();
-            labRT.anchorMin = new Vector2(0, 0.55f);
-            labRT.anchorMax = new Vector2(1, 1);
-            labRT.offsetMin = Vector2.zero;
-            labRT.offsetMax = Vector2.zero;
-
-            Text val = UIFactory.CreateText(go.transform, "Value", "0.00", 22, color, TextAnchor.UpperLeft);
-            RectTransform vRT = val.GetComponent<RectTransform>();
-            vRT.anchorMin = new Vector2(0, 0);
-            vRT.anchorMax = new Vector2(1, 0.6f);
-            vRT.offsetMin = Vector2.zero;
-            vRT.offsetMax = Vector2.zero;
-
-            return val;
+            // 「更多数据」按钮：打开其余数据及其曲线
+            Button moreBtn = UIFactory.CreateButton(body, "MoreDataBtn", "更多数据", 13);
+            RectTransform mbRT = moreBtn.GetComponent<RectTransform>();
+            mbRT.anchorMin = new Vector2(1, 0);
+            mbRT.anchorMax = new Vector2(1, 0);
+            mbRT.pivot = new Vector2(1, 0);
+            mbRT.anchoredPosition = new Vector2(0, 2);
+            mbRT.sizeDelta = new Vector2(120, 34);
+            moreBtn.onClick.AddListener(ShowChartPanel);
         }
 
         // ===================== 右侧栏（摄像头识别 + 雷达扫描 + 检测数据） =====================
@@ -1623,20 +1686,27 @@ namespace DigitalTwin
             public float rangeDeg;    // 缺陷环向角宽
             public int markCount;     // 已标红的截面数（从 startSection 起连续）
             public int startSection;  // 首次检测到该缺陷时的小车截面
-            public string typeName;   // 缺陷类型（如「腐蚀」「划痕」）
+            public string typeName;   // 缺陷类型（模型输出：corrosion / scratch）
             public Color color = new Color(1f, 0.4f, 0.2f, 1f); // 该类型对应的标注颜色
             public readonly List<Texture2D> frames = new List<Texture2D>();
+            public Texture2D latestFrame; // 最近一帧（缩略图放大时使用）
+            public RawImage thumbImage;   // 左下角对应的缩略图（每个缺陷只有一项）
         }
 
-        /// <summary>缺陷类型 → 标注颜色（腐蚀=绿，划痕=红，其它=橙）。</summary>
+        /// <summary>缺陷类型 → 标注颜色（只认 corrosion=绿、scratch=红，其它=橙）。</summary>
         private static Color ColorForDefectType(string type)
         {
-            switch (type)
+            string t = string.IsNullOrEmpty(type) ? "" : type.Trim().ToLowerInvariant();
+
+            if (t == "corrosion")
             {
-                case "腐蚀": return new Color(0.20f, 0.90f, 0.35f, 1f);
-                case "划痕": return new Color(1f, 0.16f, 0.16f, 1f);
-                default: return new Color(1f, 0.65f, 0.15f, 1f);
+                return new Color(0.20f, 0.90f, 0.35f, 1f);
             }
+            if (t == "scratch")
+            {
+                return new Color(1f, 0.16f, 0.16f, 1f);
+            }
+            return new Color(1f, 0.65f, 0.15f, 1f);
         }
 
         /// <summary>
@@ -1701,24 +1771,136 @@ namespace DigitalTwin
                     rec.markCount++;
                 }
 
-                RecordDefectFrame(rec, tex);
+                Texture2D shot = RecordDefectFrame(rec, tex);
+                // 每个缺陷在左下角只占一项：首次创建缩略图，之后仅刷新图片
+                if (shot != null)
+                {
+                    AddDefectThumbnail(rec, shot);
+                }
             }
         }
 
-        private void RecordDefectFrame(DefectRecord rec, Texture tex)
+        /// <summary>把当前画面记录到该缺陷（返回克隆，供调用方去重后加入左下角列表）。</summary>
+        private Texture2D RecordDefectFrame(DefectRecord rec, Texture tex)
         {
-            if (tex == null)
+            if (tex == null || rec.frames.Count >= maxDefectFrames)
+            {
+                return null;
+            }
+
+            Texture2D clone = CloneTexture(tex);
+            if (clone != null)
+            {
+                rec.frames.Add(clone);
+            }
+            return clone;
+        }
+
+        /// <summary>为缺陷创建（或刷新）左下角缩略图：每个缺陷只占一项，列表数量与缺陷数量一致。</summary>
+        private void AddDefectThumbnail(DefectRecord rec, Texture2D tex)
+        {
+            if (defectThumbContainer == null || rec == null || tex == null)
             {
                 return;
             }
 
-            if (rec.frames.Count < maxDefectFrames)
+            rec.latestFrame = tex;
+
+            // 该缺陷已有缩略图 → 只替换图片，不再新增一项
+            if (rec.thumbImage != null)
             {
-                Texture2D clone = CloneTexture(tex);
-                if (clone != null)
+                rec.thumbImage.texture = tex;
+                return;
+            }
+
+            if (defectThumbEmptyText != null && defectThumbEmptyText.gameObject.activeSelf)
+            {
+                defectThumbEmptyText.gameObject.SetActive(false);
+            }
+
+            Color typeColor = ColorForDefectType(rec.typeName);
+
+            GameObject item = new GameObject("Thumb", typeof(RectTransform), typeof(Image));
+            item.transform.SetParent(defectThumbContainer, false);
+            Image bg = item.GetComponent<Image>();
+            bg.color = new Color(0.06f, 0.08f, 0.10f, 1f);
+            bg.raycastTarget = true; // 让拖拽事件冒泡到 ScrollRect，可用鼠标拖动列表
+            UIFactory.ApplyRounded(bg);
+
+            LayoutElement le = item.AddComponent<LayoutElement>();
+            le.preferredWidth = 110f;
+            le.preferredHeight = 94f;
+
+            // 图片（等比铺满裁切，避免不同分辨率拉变形）
+            GameObject imgGO = new GameObject("Image", typeof(RectTransform), typeof(RawImage));
+            imgGO.transform.SetParent(item.transform, false);
+            RawImage img = imgGO.GetComponent<RawImage>();
+            img.texture = tex;
+            img.color = Color.white; // 必须白色，否则会乘暗
+            img.raycastTarget = false;
+            RectTransform irt = imgGO.GetComponent<RectTransform>();
+            irt.anchorMin = new Vector2(0, 0.24f);
+            irt.anchorMax = new Vector2(1, 1);
+            irt.offsetMin = new Vector2(3, 0);
+            irt.offsetMax = new Vector2(-3, -3);
+
+            const float boxAspect = 104f / 68f;
+            float texAspect = (float)tex.width / Mathf.Max(1, tex.height);
+            if (texAspect > boxAspect)
+            {
+                float uw = boxAspect / texAspect;
+                img.uvRect = new Rect((1f - uw) * 0.5f, 0f, uw, 1f);
+            }
+            else
+            {
+                float vh = texAspect / boxAspect;
+                img.uvRect = new Rect(0f, (1f - vh) * 0.5f, 1f, vh);
+            }
+
+            // 类型 + 角度
+            string type = string.IsNullOrEmpty(rec.typeName) ? "缺陷" : rec.typeName;
+            Text lab = UIFactory.CreateText(item.transform, "Label", $"{type} {rec.angleDeg:0}°", 10,
+                typeColor, TextAnchor.MiddleCenter, FontStyle.Bold);
+            RectTransform lrt = lab.GetComponent<RectTransform>();
+            lrt.anchorMin = Vector2.zero;
+            lrt.anchorMax = new Vector2(1, 0.26f);
+            lrt.offsetMin = Vector2.zero;
+            lrt.offsetMax = Vector2.zero;
+
+            // 双击缩略图 → 放大显示
+            Button btn = item.AddComponent<Button>();
+            btn.transition = Selectable.Transition.None;
+            btn.targetGraphic = bg;
+            float lastClickTime = -10f;
+            btn.onClick.AddListener(() =>
+            {
+                if (Time.unscaledTime - lastClickTime <= 0.35f)
                 {
-                    rec.frames.Add(clone);
+                    lastClickTime = -10f;
+                    ShowEnlargedDefectImage(rec.latestFrame, rec.typeName, rec.angleDeg);
                 }
+                else
+                {
+                    lastClickTime = Time.unscaledTime;
+                }
+            });
+
+            rec.thumbImage = img;
+        }
+
+        /// <summary>清空左下角缺陷图片列表，恢复占位文字。</summary>
+        private void ClearDefectThumbnails()
+        {
+            if (defectThumbContainer != null)
+            {
+                for (int i = defectThumbContainer.childCount - 1; i >= 0; i--)
+                {
+                    Destroy(defectThumbContainer.GetChild(i).gameObject);
+                }
+            }
+            if (defectThumbEmptyText != null)
+            {
+                defectThumbEmptyText.gameObject.SetActive(true);
             }
         }
 
@@ -1990,15 +2172,11 @@ namespace DigitalTwin
                 radiusChart?.AddValue((float)p.radius);
 
                 if (deviationValueText != null) deviationValueText.text = p.deviation.ToString("0.00");
-                if (ellipticityValueText != null) ellipticityValueText.text = p.ellipticity.ToString("0.00");
                 if (confidenceValueText != null) confidenceValueText.text = p.confidence.ToString("0.00");
                 if (radiusValueText != null) radiusValueText.text = p.radius.ToString("0.00");
 
-                // 主界面数据卡片同步
-                if (mainDeviationText != null) mainDeviationText.text = p.deviation.ToString("0.00");
+                // 主界面只展示椭圆度
                 if (mainEllipticityText != null) mainEllipticityText.text = p.ellipticity.ToString("0.00");
-                if (mainConfidenceText != null) mainConfidenceText.text = p.confidence.ToString("0.00");
-                if (mainRadiusText != null) mainRadiusText.text = p.radius.ToString("0.00");
             }
 
             // 检测结果
@@ -2199,13 +2377,13 @@ namespace DigitalTwin
             panel.anchoredPosition = Vector2.zero;
             panel.sizeDelta = new Vector2(900, 560);
 
-            AddWindowTitleBar(panel, "检测数据曲线", HideChartPanel, 520f, 360f);
+            AddWindowTitleBar(panel, "更多数据", HideChartPanel, 520f, 360f);
 
-            // 2x2 四张曲线图
+            // 椭圆度已在主界面展示，这里显示其余数据及其曲线
             deviationChart = CreateChartBlock(panel, "偏差", 0, 1, UIFactory.AccentCyan, out deviationValueText);
-            ellipticityChart = CreateChartBlock(panel, "椭圆度", 1, 1, UIFactory.AccentGreen, out ellipticityValueText);
-            confidenceChart = CreateChartBlock(panel, "置信度", 0, 0, UIFactory.AccentOrange, out confidenceValueText);
-            radiusChart = CreateChartBlock(panel, "半径", 1, 0, new Color(0.7f, 0.5f, 1f), out radiusValueText);
+            confidenceChart = CreateChartBlock(panel, "置信度", 1, 1, UIFactory.AccentOrange, out confidenceValueText);
+            radiusChart = CreateChartBlock(panel, "半径", 0, 0, new Color(0.7f, 0.5f, 1f), out radiusValueText);
+            CenterChartBlock(radiusChart);
 
             chartPanel = overlayGO;
             chartPanel.SetActive(false);
@@ -2221,36 +2399,52 @@ namespace DigitalTwin
             blockRT.offsetMin = new Vector2(24, 22);
             blockRT.offsetMax = new Vector2(-24, -46);
 
-            // 标签（顶部）
-            Text lab = UIFactory.CreateText(blockGO.transform, "Label", label, 14, UIFactory.TextPrimary, TextAnchor.MiddleLeft, FontStyle.Bold);
+            // 左侧：标签 + 数值（与主界面「检测数据」格式一致）
+            Text lab = UIFactory.CreateText(blockGO.transform, "Label", label, 12, UIFactory.TextDim, TextAnchor.LowerLeft);
             RectTransform lRT = lab.GetComponent<RectTransform>();
-            lRT.anchorMin = new Vector2(0, 1);
-            lRT.anchorMax = new Vector2(1, 1);
-            lRT.pivot = new Vector2(0.5f, 1);
-            lRT.anchoredPosition = Vector2.zero;
-            lRT.sizeDelta = new Vector2(0, 22);
+            lRT.anchorMin = new Vector2(0f, 0.5f);
+            lRT.anchorMax = new Vector2(0.36f, 1f);
+            lRT.offsetMin = Vector2.zero;
+            lRT.offsetMax = Vector2.zero;
 
-            // 当前值（底部）
-            valueText = UIFactory.CreateText(blockGO.transform, "Value", "--", 13, color, TextAnchor.MiddleCenter, FontStyle.Bold);
+            valueText = UIFactory.CreateText(blockGO.transform, "Value", "--", 26, color, TextAnchor.UpperLeft);
             RectTransform vRT = valueText.GetComponent<RectTransform>();
-            vRT.anchorMin = new Vector2(0, 0);
-            vRT.anchorMax = new Vector2(1, 0);
-            vRT.pivot = new Vector2(0.5f, 0);
-            vRT.anchoredPosition = Vector2.zero;
-            vRT.sizeDelta = new Vector2(0, 22);
+            vRT.anchorMin = new Vector2(0f, 0f);
+            vRT.anchorMax = new Vector2(0.36f, 0.55f);
+            vRT.offsetMin = Vector2.zero;
+            vRT.offsetMax = Vector2.zero;
 
-            // 图表（中间）
+            // 右侧：图表
             GameObject chartContainer = new GameObject("ChartContainer", typeof(RectTransform));
             chartContainer.transform.SetParent(blockGO.transform, false);
             RectTransform ccRT = chartContainer.GetComponent<RectTransform>();
-            ccRT.anchorMin = Vector2.zero;
-            ccRT.anchorMax = Vector2.one;
-            ccRT.offsetMin = new Vector2(0, 24);
-            ccRT.offsetMax = new Vector2(0, -26);
+            ccRT.anchorMin = new Vector2(0.38f, 0f);
+            ccRT.anchorMax = new Vector2(1f, 1f);
+            ccRT.offsetMin = Vector2.zero;
+            ccRT.offsetMax = Vector2.zero;
 
             DataChart chart = gameObject.AddComponent<DataChart>();
             chart.Build(ccRT, color, -1f);
             return chart;
+        }
+
+        /// <summary>把曲线块放到下方中间（三块布局时避免一侧单独留空）。</summary>
+        private void CenterChartBlock(DataChart chart)
+        {
+            if (chart == null || chart.transform.parent == null || chart.transform.parent.parent == null)
+            {
+                return;
+            }
+            // 层级：Chart（DataChart）→ ChartContainer → Block
+            RectTransform rt = chart.transform.parent.parent.GetComponent<RectTransform>();
+            if (rt == null)
+            {
+                return;
+            }
+            rt.anchorMin = new Vector2(0.25f, 0f);
+            rt.anchorMax = new Vector2(0.75f, 0.5f);
+            rt.offsetMin = new Vector2(0f, 22f);
+            rt.offsetMax = new Vector2(0f, -46f);
         }
 
         private void ShowChartPanel()
@@ -2526,7 +2720,55 @@ namespace DigitalTwin
             previewPitch = 25f;
             previewInited = true;
 
+            // 记录本次取景的范围，后续模型变长时据此判断是否需要重新取景
+            previewFramedCenter = b.center;
+            previewFramedRadius = radius;
+            previewManualFraming = false;
+
             // 根据网格尺寸动态调整裁剪面
+            previewCamera.nearClipPlane = Mathf.Max(0.01f, radius * 0.01f);
+            previewCamera.farClipPlane = Mathf.Max(100f, radius * 50f);
+
+            ApplyPreviewCamera();
+        }
+
+        /// <summary>
+        /// 扫描过程中模型会不断变长，若沿用初始取景，远端缺陷会跑出画面。
+        /// 这里在模型尺寸变化超过 2% 时自动重新取景：保留用户当前的旋转方向，只更新中心与距离，把整段管道放进画面。
+        /// 用户一旦手动平移或缩放（previewManualFraming），就不再自动干预。
+        /// </summary>
+        private void AutoFramePreviewIfNeeded()
+        {
+            if (previewCamera == null || pointCloudRebuilder == null)
+            {
+                return;
+            }
+
+            MeshFilter mf = pointCloudRebuilder.ResultMeshFilter;
+            if (mf == null || mf.sharedMesh == null)
+            {
+                return;
+            }
+
+            Bounds b = mf.sharedMesh.bounds;
+            float radius = Mathf.Max(0.01f, b.extents.magnitude);
+
+            // 尺寸变化很小就不动，避免重建时画面来回抖动
+            if (Vector3.Distance(b.center, previewFramedCenter) < radius * 0.02f &&
+                Mathf.Abs(radius - previewFramedRadius) < radius * 0.02f)
+            {
+                return;
+            }
+
+            previewFramedCenter = b.center;
+            previewFramedRadius = radius;
+            previewRadius = radius;
+            previewTarget = b.center;
+
+            // 按竖直 FOV 让包围球完整入画，再留 15% 余量
+            float halfFov = previewCamera.fieldOfView * 0.5f * Mathf.Deg2Rad;
+            previewDistance = radius / Mathf.Max(0.05f, Mathf.Sin(halfFov)) * 1.15f;
+
             previewCamera.nearClipPlane = Mathf.Max(0.01f, radius * 0.01f);
             previewCamera.farClipPlane = Mathf.Max(100f, radius * 50f);
 
@@ -2594,6 +2836,7 @@ namespace DigitalTwin
                     float panScale = previewDistance * 0.0018f;
                     previewTarget -= (cam.right * Input.GetAxis("Mouse X") +
                                       cam.up * Input.GetAxis("Mouse Y")) * panScale;
+                    previewManualFraming = true; // 手动取景后不再自动重新取景
                     changed = true;
                 }
 
@@ -2605,6 +2848,7 @@ namespace DigitalTwin
                         previewDistance * Mathf.Pow(0.85f, scroll),
                         previewRadius * 0.1f,
                         previewRadius * 50f);
+                    previewManualFraming = true; // 手动缩放后不再自动重新取景
                     changed = true;
                 }
             }
@@ -2635,6 +2879,7 @@ namespace DigitalTwin
             if (move.sqrMagnitude > 0f)
             {
                 previewTarget += move.normalized * (previewDistance * 0.6f) * Time.unscaledDeltaTime;
+                previewManualFraming = true; // 手动平移后不再自动重新取景
                 changed = true;
             }
 
@@ -2706,16 +2951,23 @@ namespace DigitalTwin
                 || (quitConfirmPanel != null && quitConfirmPanel.activeSelf);
         }
 
-        /// <summary>中栏预览：点云模型就绪后自动取景一次，使小窗始终有画面。</summary>
+        /// <summary>中栏预览：点云就绪后取景，并在模型变长时自动重新取景，保证远端缺陷始终在画面内。</summary>
         private void UpdateSmallPreview()
         {
-            if (previewInited || rebuildPreviewSmall == null)
+            if (rebuildPreviewSmall == null || pointCloudRebuilder == null || !pointCloudRebuilder.HasResult)
             {
                 return;
             }
-            if (pointCloudRebuilder != null && pointCloudRebuilder.HasResult)
+
+            if (!previewInited)
             {
                 FocusPreviewCamera();
+                return;
+            }
+
+            if (!previewManualFraming)
+            {
+                AutoFramePreviewIfNeeded();
             }
         }
 
@@ -3065,6 +3317,12 @@ namespace DigitalTwin
                 rec.frames.AddRange(d.frames);
                 defects.Add(rec);
 
+                // 每个缺陷只显示一张缩略图（取中间帧），列表数量与缺陷数量一致
+                if (rec.frames.Count > 0)
+                {
+                    AddDefectThumbnail(rec, rec.frames[rec.frames.Count / 2]);
+                }
+
                 // 按存档的定位参数重新标注（沿用该缺陷类型的颜色）
                 int start = Mathf.Max(0, d.startSection);
                 int count = Mathf.Max(1, d.markCount);
@@ -3080,6 +3338,9 @@ namespace DigitalTwin
         /// <summary>清空当前缺陷记录、按钮与图片纹理。</summary>
         private void ClearDefects()
         {
+            // 先清空列表与缩略图引用，再销毁纹理（否则会引用已销毁的纹理）
+            ClearDefectThumbnails();
+
             if (defectButtonContainer != null)
             {
                 for (int i = defectButtonContainer.childCount - 1; i >= 0; i--)
@@ -3157,15 +3418,24 @@ namespace DigitalTwin
             {
                 return;
             }
-            Texture2D mid = rec.frames[rec.frames.Count / 2];
+            ShowEnlargedDefectImage(rec.frames[rec.frames.Count / 2], rec.typeName, rec.angleDeg);
+        }
+
+        /// <summary>放大显示单张缺陷图片（左下角缩略图双击 / 缺陷按钮共用）。</summary>
+        private void ShowEnlargedDefectImage(Texture2D tex, string typeName, float angleDeg)
+        {
+            if (tex == null)
+            {
+                return;
+            }
             if (imagePreview != null)
             {
-                imagePreview.texture = mid;
+                imagePreview.texture = tex;
             }
             if (imageTitle != null)
             {
-                string type = string.IsNullOrEmpty(rec.typeName) ? "缺陷" : rec.typeName;
-                imageTitle.text = $"{type}图片（角度 {rec.angleDeg:0.0}°）";
+                string type = string.IsNullOrEmpty(typeName) ? "缺陷" : typeName;
+                imageTitle.text = $"{type}图片（角度 {angleDeg:0.0}°）";
             }
             if (imagePanel != null)
             {
